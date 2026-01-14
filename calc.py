@@ -2,108 +2,136 @@ import streamlit as st
 import math
 
 # --- Page Config ---
-st.set_page_config(page_title="Lucid Flex Position Sizer", page_icon="⚖️")
+st.set_page_config(page_title="Universal Prop Calculator", page_icon="🧮")
+
+# --- Default Presets (Lucid & Tradeify) ---
+PRESETS = {
+    "Lucid Flex 50k": {
+        "size": 50000,
+        "target": 3000,
+        "consistency": 0.50,
+        "max_dd": 2000,
+        "max_minis": 4,
+        "max_micros": 40,
+        "daily_loss": 0  # 0 = No Limit
+    },
+    "Tradeify Select 50k": {
+        "size": 50000,
+        "target": 2500,
+        "consistency": 0.40,
+        "max_dd": 2000,
+        "max_minis": 4,
+        "max_micros": 40,
+        "daily_loss": 0
+    },
+    "🛠️ Custom / Other": {
+        "size": 50000,
+        "target": 3000,
+        "consistency": 0.0,
+        "max_dd": 2000,
+        "max_minis": 10,
+        "max_micros": 100,
+        "daily_loss": 0
+    }
+}
 
 # --- Constants ---
-# NQ = $20 per point, MNQ = $2 per point
 POINT_VALUE_NQ = 20.0
 POINT_VALUE_MNQ = 2.0
 
-st.title("⚖️ Lucid Flex 50k Calculator")
+st.title("🧮 Universal Prop Calculator")
 
-# --- Mode Selection ---
-mode = st.radio(
-    "What do you want to calculate?",
-    ["💰 Calculate P&L (I know my Qty)", "🛡️ Calculate Quantity (I know my Risk $)"],
-    horizontal=True
-)
+# --- Account Selection & Configuration ---
+with st.expander("⚙️ Account Settings", expanded=True):
+    col_sel, col_stage = st.columns(2)
+    with col_sel:
+        account_choice = st.selectbox("Select Account / Mode:", list(PRESETS.keys()))
+    with col_stage:
+        stage = st.selectbox("Current Stage:", ["Evaluation", "Funded"])
 
+    # Load defaults from preset
+    defaults = PRESETS[account_choice]
+
+    # If Custom is selected, show inputs. If not, show inputs but disabled (read-only)
+    is_custom = (account_choice == "🛠️ Custom / Other")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        acc_size = st.number_input("Account Size ($)", value=defaults["size"], disabled=not is_custom)
+        max_dd = st.number_input("Max Drawdown ($)", value=defaults["max_dd"], disabled=not is_custom)
+    with c2:
+        profit_target = st.number_input("Profit Target ($)", value=defaults["target"], disabled=not is_custom)
+        consistency_pct = st.number_input("Consistency % (0 = None)", value=defaults["consistency"], step=0.1, disabled=not is_custom)
+    with c3:
+        max_minis = st.number_input("Max Minis (NQ)", value=defaults["max_minis"], disabled=not is_custom)
+        daily_loss = st.number_input("Daily Loss Limit ($) (0=None)", value=defaults["daily_loss"], disabled=not is_custom)
+
+    # Max micros usually 10x minis, but let custom mode edit it
+    max_micros = st.number_input("Max Micros (MNQ)", value=defaults["max_micros"], disabled=not is_custom)
+
+# --- Calculator Logic ---
 st.divider()
 
-# ==========================================
-# MODE 1: Calculate Quantity (Risk Based)
-# ==========================================
-if "Calculate Quantity" in mode:
-    st.subheader("🛡️ Risk-Based Position Sizer")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        contract_type = st.radio("Select Instrument:", ["NQ (Mini)", "MNQ (Micro)"])
-    with col2:
-        max_risk_usd = st.number_input("Max Loss Allowed ($):", min_value=10.0, value=300.0, step=10.0)
+# Mode Selection
+calc_mode = st.radio("Calculator Mode:", ["💰 Calculate P&L (Manual Size)", "🛡️ Calculate Max Size (Risk Based)"], horizontal=True)
 
-    col3, col4 = st.columns(2)
-    with col3:
-        stop_loss_pts = st.number_input("Stop Loss (Points):", min_value=1.0, value=10.0, step=0.5)
-    with col4:
-        take_profit_pts = st.number_input("Take Profit (Points):", min_value=1.0, value=20.0, step=0.5)
-
-    # Logic
+# Common Inputs
+c_instr, c_pts = st.columns(2)
+with c_instr:
+    contract_type = st.radio("Instrument:", ["NQ (Mini)", "MNQ (Micro)"], horizontal=True)
     point_val = POINT_VALUE_NQ if contract_type == "NQ (Mini)" else POINT_VALUE_MNQ
-    risk_per_contract = stop_loss_pts * point_val
-    
-    # Calculate Max Quantity (Rounded Down)
-    if risk_per_contract > 0:
-        suggested_qty = math.floor(max_risk_usd / risk_per_contract)
-    else:
-        suggested_qty = 0
+    limit_size = max_minis if contract_type == "NQ (Mini)" else max_micros
 
-    # Display Result
-    st.markdown("### 🎯 Recommended Position Size")
-    
-    if suggested_qty == 0:
-        st.error(f"❌ **Stop Loss is too wide!** You cannot trade even 1 contract within your ${max_risk_usd} limit.")
-        st.info(f"1 Contract Risk: ${risk_per_contract:.2f}")
-    else:
-        st.success(f"**{suggested_qty} Contracts**")
-        
-        # Breakdown
-        actual_risk = suggested_qty * risk_per_contract
-        potential_reward = suggested_qty * (take_profit_pts * point_val)
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Actual Risk", f"-${actual_risk:.2f}")
-        c2.metric("Potential Profit", f"+${potential_reward:.2f}")
-        c3.metric("Remaining Buffer", f"${max_risk_usd - actual_risk:.2f}")
-        
-        # NQ/MNQ Conversion Tip
-        if contract_type == "NQ (Mini)" and suggested_qty == 0:
-            mnq_equiv = math.floor(max_risk_usd / (stop_loss_pts * POINT_VALUE_MNQ))
-            st.info(f"💡 Tip: Switch to **MNQ**. You could trade **{mnq_equiv} MNQ** contracts instead.")
+with c_pts:
+    sl_pts = st.number_input("Stop Loss (Pts):", 1.0, 200.0, 10.0, 0.5)
+    tp_pts = st.number_input("Take Profit (Pts):", 1.0, 500.0, 20.0, 0.5)
 
-# ==========================================
-# MODE 2: Calculate P&L (Standard)
-# ==========================================
+# Mode Specific Logic
+qty = 0
+if "Manual Size" in calc_mode:
+    qty = st.number_input("Quantity:", min_value=1, value=1)
+    if qty > limit_size:
+        st.error(f"🚫 Exceeds Max Size! Limit is {limit_size}.")
+        st.stop()
 else:
-    st.subheader("💰 Standard P&L Calculator")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        contract_type = st.radio("Select Instrument:", ["NQ (Mini)", "MNQ (Micro)"])
-    with col2:
-        quantity = st.number_input("Quantity:", min_value=1, value=1, step=1)
+    risk_usd = st.number_input("Max Risk ($):", value=300.0, step=10.0)
+    risk_per_con = sl_pts * point_val
+    qty = math.floor(risk_usd / risk_per_con)
+    if qty > limit_size:
+        st.warning(f"⚠️ Capped at max size {limit_size}.")
+        qty = limit_size
 
-    col3, col4 = st.columns(2)
-    with col3:
-        stop_loss_pts = st.number_input("Stop Loss (Points):", min_value=0.0, value=10.0, step=0.25)
-    with col4:
-        take_profit_pts = st.number_input("Take Profit (Points):", min_value=0.0, value=20.0, step=0.25)
+# --- Results ---
+st.divider()
+st.subheader(f"📊 Results: {qty} Contracts")
 
-    # Logic
-    point_val = POINT_VALUE_NQ if contract_type == "NQ (Mini)" else POINT_VALUE_MNQ
-    
-    total_risk = quantity * (stop_loss_pts * point_val)
-    total_reward = quantity * (take_profit_pts * point_val)
+risk_total = qty * sl_pts * point_val
+reward_total = qty * tp_pts * point_val
 
-    # Display
-    st.markdown("### 📊 Trade Outcome")
-    m1, m2 = st.columns(2)
-    m1.metric("Total Risk", f"-${total_risk:,.2f}")
-    m2.metric("Total Profit", f"+${total_reward:,.2f}")
+m1, m2, m3 = st.columns(3)
+m1.metric("Risk", f"-${risk_total:,.2f}")
+m2.metric("Reward", f"+${reward_total:,.2f}")
+m3.metric("R:R", f"1:{tp_pts/sl_pts:.1f}")
+
+# --- Rule Checks ---
+st.subheader("🛡️ Safety Check")
+
+# 1. Drawdown / Daily Loss
+if daily_loss > 0 and risk_total > daily_loss:
+    st.error(f"❌ Violates Daily Loss Limit (${daily_loss})")
+elif risk_total > max_dd:
+    st.error(f"💀 Account Blown (Risk > Max DD ${max_dd})")
+else:
+    st.success("✅ Risk parameters safe")
+
+# 2. Consistency (Only in Eval)
+if stage == "Evaluation" and consistency_pct > 0:
+    max_day = profit_target * consistency_pct
+    st.write(f"**Consistency Limit:** ${max_day:,.0f} ({int(consistency_pct*100)}%)")
     
-    # 50k Account Sanity Checks
-    st.caption("--- Account Safety Checks ---")
-    if total_risk > 600:
-        st.error("⚠️ **High Risk:** This exceeds typical daily loss limits for 50k accounts.")
-    elif total_reward > 1500:
-        st.warning("⚠️ **Consistency Check:** Profit > $1500 (50% of $3k target). Ensure this aligns with your consistency rules.")
+    if reward_total > max_day:
+        st.warning(f"⚠️ Profit (${reward_total:,.0f}) exceeds consistency limit! This trade might not fully count.")
+    else:
+        st.success("✅ Profit within consistency limit")
+elif stage == "Funded":
+    st.info("ℹ️ Consistency rules usually removed in Funded stage (verify with firm).")
