@@ -15,6 +15,7 @@ st.markdown("""
     .big-font { font-size:20px !important; font-weight: bold; }
     .success-box { padding:10px; border-radius:5px; background-color:#d4edda; color:#155724; border: 1px solid #c3e6cb; }
     div.stButton > button:first-child { width: 100%; }
+    a { text-decoration: none; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -31,12 +32,13 @@ def is_killzone():
     return start_time <= ny_time <= end_time
 
 def reset_callbacks():
-    # This function clears the specific keys used in the checkboxes
+    # Clears all checkboxes
     keys = ['p1_c1', 'p1_c2', 'p1_c3', 'p1_c4', 
             'p2_c1', 'p2_c2', 'p2_c3', 'p2_c4', 
             'p3_c1', 'p3_c2', 'p3_c3', 'p3_c4']
     for key in keys:
-        st.session_state[key] = False
+        if key in st.session_state:
+            st.session_state[key] = False
 
 # --- SIDEBAR (CALCULATOR LINK) ---
 with st.sidebar:
@@ -62,38 +64,37 @@ with col2:
 
 st.markdown("---")
 
-# --- PHASE 1: THE STORY ---
-st.header("Phase 1: The Story (15m & 5m)")
-st.info("Before looking at the 1m chart, the 'Big Picture' must be clear.")
+# --- PHASE 1: THE NARRATIVE ---
+st.header("Phase 1: The Narrative (15m & 5m)")
+st.info("This phase is about finding the 'Magnet' that pulls the price.")
 
-# Note: Added 'key' argument to every checkbox to enable the Reset functionality
-p1_c1 = st.checkbox("Identify DOL: Where is the 'Robot' trying to go? (Old High/Low, Equal Highs, FVG)", key='p1_c1')
-p1_c2 = st.checkbox("Current Bias: Is 15m structure making HH/HL (Bullish) or LH/LL (Bearish)?", key='p1_c2')
-p1_c3 = st.checkbox("Premium/Discount: Is price 'Cheap' (Long) or 'Expensive' (Short)?", key='p1_c3')
-p1_c4 = st.checkbox("HTF Liquidity Sweep: Has price taken out a 5m/15m swing? (Green Light)", key='p1_c4')
+p1_c1 = st.checkbox("Identify 15m DOL: Where is the most obvious 'pile of money'? (Old High/Low, Equal Highs)", key='p1_c1')
+p1_c2 = st.checkbox("Confirm 15m Trend: Is price clearly 'stepping' higher or lower on the 15m?", key='p1_c2')
+p1_c3 = st.checkbox("Liquidity Sweep: Has price taken out a recent 5m or 15m swing to 'activate' the algo?", key='p1_c3')
+p1_c4 = st.checkbox("Time Check: Am I looking at the chart during 9:30 AM – 11:00 AM NY?", key='p1_c4')
 
 phase1_complete = all([p1_c1, p1_c2, p1_c3, p1_c4])
 
 if phase1_complete:
-    st.success("Story is clear. Proceed to Trigger.")
+    st.success("Narrative is clear. Proceed to Execution.")
 else:
     st.stop() 
 
 st.markdown("---")
 
-# --- PHASE 2: THE TRIGGER ---
-st.header("Phase 2: The Trigger (1m)")
-st.info("Once the 15m is pointing the way, zoom into the 1m to find the entry.")
+# --- PHASE 2: THE EXECUTION ---
+st.header("Phase 2: The Execution (1m)")
+st.info("This is where you look for the 'Robot' to switch directions.")
 
-p2_c1 = st.checkbox("Wait for Displacement: High-energy candle, large body, small wicks.", key='p2_c1')
-p2_c2 = st.checkbox("Identify IFVG: Aggressive close through a previous FVG?", key='p2_c2')
-p2_c3 = st.checkbox("Market Structure Shift (MSS): Break of 1m swing point with energy?", key='p2_c3')
-p2_c4 = st.checkbox("FVG Gap Cluster Check: Entering at first FVG (High Energy) or waiting for FVG cluster inversion (Low Energy)?", key='p2_c4')
+p2_c1 = st.checkbox("Displacement Check: Did price move away from sweep with big, fast candles (High Energy)?", key='p2_c1')
+p2_c2 = st.checkbox("Market Structure Shift (MSS): Did price break the last 1m swing point that led to sweep?", key='p2_c2')
+p2_c3 = st.checkbox("Identify IFVG: Did price aggressively close through a previous Fair Value Gap?", key='p2_c3')
+p2_c4 = st.checkbox("The Entry: Did a 1m candle close above/below the IFVG? (Your entry trigger).", key='p2_c4')
 
 phase2_complete = all([p2_c1, p2_c2, p2_c3, p2_c4])
 
 if phase2_complete:
-    st.success("Trigger validated. Proceed to Risk Management.")
+    st.success("Setup valid. Calculate risk.")
 else:
     st.warning("Waiting for entry setup...")
     st.stop()
@@ -101,28 +102,45 @@ else:
 st.markdown("---")
 
 # --- PHASE 3: THE BUSINESS ---
-st.header("Phase 3: The Business (Risk Mgmt)")
-st.info("Don't click 'Buy' or 'Sell' until the math makes sense.")
+st.header("Phase 3: The Business (Risk & Mgmt)")
+st.info("The mechanical rules for your prop firm funded accounts.")
 
-p3_c1 = st.checkbox("Stop Loss Placement: Is my SL at a safe swing point?", key='p3_c1')
-p3_c2 = st.checkbox("RR Check: At least 1:1 before first major obstacle?", key='p3_c2')
-p3_c3 = st.checkbox("$400 Rule: If this hits 1R, is profit >= $400? (Prepare to bank).", key='p3_c3')
-p3_c4 = st.checkbox("Time Check: Is this inside 9:30 AM – 11:00 AM NY Time?", key='p3_c4')
+p3_c1 = st.checkbox("Stop Loss Placement: Is SL safe at the recent 1m swing point (peak of sweep)?", key='p3_c1')
+p3_c2 = st.checkbox("RR Check: At least 1:1 RR before the next major 1m obstacle?", key='p3_c2')
+p3_c3 = st.checkbox("The '$400 Rule': If this hits 1R, is profit $400+? (If yes, be ready to book).", key='p3_c3')
+p3_c4 = st.checkbox("'Bank the 1R' Plan: If it slows at 1R, am I prepared to exit and 'pay the trader'?", key='p3_c4')
 
 phase3_complete = all([p3_c1, p3_c2, p3_c3, p3_c4])
 
 st.markdown("---")
 
-# --- FINAL DECISION DASHBOARD ---
+# --- FINAL DECISION & JOURNALING ---
 st.subheader("🏁 Trade Decision")
 
 if phase3_complete:
     st.markdown("""
-        <div style="background-color: #28a745; color: white; padding: 20px; border-radius: 10px; text-align: center;">
+        <div style="background-color: #28a745; color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
             <h1>EXECUTE TRADE</h1>
             <p>All systems go. Stick to the plan.</p>
         </div>
     """, unsafe_allow_html=True)
+
+    st.markdown("### 📝 Post-Trade Outcome")
+    st.write("Once the trade is closed, select the outcome:")
+    
+    col_win, col_loss = st.columns(2)
+    
+    journal_url = "https://wide-kayak-822.notion.site/Backtesting-2e7a40276b1081a1acffc5fb1f07503a"
+    
+    with col_win:
+        if st.button("🏆 WIN"):
+            st.balloons()
+            st.success(f"Great work! Now lock it in: [Open Journal]({journal_url})")
+            
+    with col_loss:
+        if st.button("❌ LOSS"):
+            st.info(f"Part of the game. Review the data: [Open Journal]({journal_url})")
+            
 else:
     st.markdown("""
         <div style="background-color: #dc3545; color: white; padding: 20px; border-radius: 10px; text-align: center;">
@@ -131,6 +149,7 @@ else:
         </div>
     """, unsafe_allow_html=True)
 
+st.markdown("---")
+
 # --- RESET BUTTON ---
-# Uses the callback function to clear state before rerunning
 st.button("Reset Checklist", on_click=reset_callbacks)
