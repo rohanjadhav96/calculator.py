@@ -74,7 +74,7 @@ st.info("Once the 15m is pointing the way, zoom into the 1m to find the entry.")
 p2_c1 = st.checkbox("Wait for Displacement: High-energy candle, large body, small wicks.")
 p2_c2 = st.checkbox("Identify IFVG: Aggressive close through a previous FVG?")
 p2_c3 = st.checkbox("Market Structure Shift (MSS): Break of 1m swing point with energy?")
-p2_c4 = st.checkbox("Gap Cluster Check: Entering at first (High Energy) or waiting for cluster (Low Energy)?")
+p2_c4 = st.checkbox("FVG Gap Cluster Check: Entering at first FVG (High Energy) or waiting for FVG cluster inversion (Low Energy)?")
 
 phase2_complete = all([p2_c1, p2_c2, p2_c3, p2_c4])
 
