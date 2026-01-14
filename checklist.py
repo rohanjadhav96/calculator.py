@@ -74,6 +74,7 @@ st.info("Once the 15m is pointing the way, zoom into the 1m to find the entry.")
 p2_c1 = st.checkbox("Wait for Displacement: High-energy candle, large body, small wicks.")
 p2_c2 = st.checkbox("Identify IFVG: Aggressive close through a previous FVG?")
 p2_c3 = st.checkbox("Market Structure Shift (MSS): Break of 1m swing point with energy?")
+# UPDATED LINE BELOW
 p2_c4 = st.checkbox("FVG Gap Cluster Check: Entering at first FVG (High Energy) or waiting for FVG cluster inversion (Low Energy)?")
 
 phase2_complete = all([p2_c1, p2_c2, p2_c3, p2_c4])
@@ -90,7 +91,8 @@ st.markdown("---")
 st.header("Phase 3: The Business (Risk Mgmt)")
 st.info("Don't click 'Buy' or 'Sell' until the math makes sense.")
 
-p3_c1 = st.checkbox("Stop Loss: At Mean Threshold (50%) of FVG or safe swing point?")
+# UPDATED LINE BELOW
+p3_c1 = st.checkbox("Stop Loss Placement: Is my SL at a safe swing point?") 
 p3_c2 = st.checkbox("RR Check: At least 1:1 before first major obstacle?")
 p3_c3 = st.checkbox("$400 Rule: If this hits 1R, is profit >= $400? (Prepare to bank).")
 p3_c4 = st.checkbox("Time Check: Is this inside 9:30 AM – 11:00 AM NY Time?")
