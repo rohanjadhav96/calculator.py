@@ -2,7 +2,7 @@ import streamlit as st
 import math
 
 # --- Page Config ---
-st.set_page_config(page_title="Universal Prop Calculator", page_icon="🧮")
+st.set_page_config(page_title="Prop Calculator", page_icon="🧮")
 
 # --- Constants & Settings ---
 # Instrument Specs (Point Values)
@@ -29,7 +29,7 @@ PRESETS = {
     }
 }
 
-st.title("🧮 Universal Prop Calculator")
+st.title("🧮 Prop Calculator")
 
 # --- 1. Account Configuration ---
 with st.expander("⚙️ Account Rules & Settings", expanded=False):
