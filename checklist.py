@@ -75,7 +75,7 @@ st.markdown("---")
 
 # --- PHASE 2: THE EXECUTION ---
 st.header("Phase 2: The Execution (1m)")
-st.info("Waiting for the 'algo' to switch directions.")
+st.info("Waiting for the 'Algo' to switch directions.")
 
 p2_c1 = st.checkbox("Displacement: Big, fast candles moving away from the sweep?", key='p2_c1')
 p2_c2 = st.checkbox("MSS: Did price break the last 1m swing point?", key='p2_c2')
