@@ -86,7 +86,7 @@ st.markdown("---")
 
 # --- PHASE 3: THE BUSINESS ---
 st.header("Phase 3: The Business (Risk & Mgmt)")
-st.info("Mechanical rules for the funded account.")
+st.info("Mechanical rules for the eval/funded account.")
 
 p3_c1 = st.checkbox("Stop Loss: Is SL safe at the recent 1m swing point?", key='p3_c1')
 p3_c2 = st.checkbox("RR Check: At least 1:1 RR before the next obstacle?", key='p3_c2')
