@@ -2,15 +2,19 @@ import streamlit as st
 import math
 
 # --- Page Config ---
-st.set_page_config(page_title="Prop Calculator", page_icon="🧮")
+st.set_page_config(page_title="Dual Prop Calculator", page_icon="⚖️")
 
 # --- Constants & Settings ---
-# Instrument Specs (Point Values)
-INSTRUMENTS = {
-    "NQ (Mini)": {"val": 20.0, "type": "mini"},
-    "MNQ (Micro)": {"val": 2.0, "type": "micro"},
-    "ES (Mini)": {"val": 50.0, "type": "mini"},
-    "MES (Micro)": {"val": 5.0, "type": "micro"},
+# Asset Groups (Mini & Micro paired)
+ASSET_GROUPS = {
+    "Nasdaq (NQ & MNQ)": {
+        "mini_name": "NQ", "mini_val": 20.0,
+        "micro_name": "MNQ", "micro_val": 2.0
+    },
+    "S&P 500 (ES & MES)": {
+        "mini_name": "ES", "mini_val": 50.0,
+        "micro_name": "MES", "micro_val": 5.0
+    }
 }
 
 # Account Presets
@@ -29,7 +33,7 @@ PRESETS = {
     }
 }
 
-st.title("🧮 Prop Calculator")
+st.title("⚖️ NQ/MNQ & ES/MES Comparator")
 
 # --- 1. Account Configuration ---
 with st.expander("⚙️ Account Rules & Settings", expanded=False):
@@ -51,85 +55,119 @@ with st.expander("⚙️ Account Rules & Settings", expanded=False):
         profit_target = st.number_input("Profit Target ($)", value=defaults["target"], disabled=not is_custom)
         consistency_pct = st.number_input("Consistency %", value=defaults["consistency"], step=0.1, disabled=not is_custom)
     with col3:
-        max_minis = st.number_input("Max Minis", value=defaults["max_minis"], disabled=not is_custom)
-        max_micros = st.number_input("Max Micros", value=defaults["max_micros"], disabled=not is_custom)
+        limit_mini = st.number_input("Max Minis", value=defaults["max_minis"], disabled=not is_custom)
+        limit_micro = st.number_input("Max Micros", value=defaults["max_micros"], disabled=not is_custom)
         daily_loss = st.number_input("Daily Loss Limit ($)", value=defaults["daily_loss"], disabled=not is_custom)
 
 # --- 2. Calculator Inputs ---
 st.divider()
 
-# Mode & Instrument Selection
-c_mode, c_inst = st.columns([1, 1])
+# Mode & Asset Selection
+c_mode, c_asset = st.columns([1, 1])
 with c_mode:
-    calc_mode = st.radio("Mode:", ["💰 Calculate P&L", "🛡️ Calculate Quantity"])
-with c_inst:
-    selected_inst = st.selectbox("Instrument:", list(INSTRUMENTS.keys()))
+    calc_mode = st.radio("Mode:", ["🛡️ Calculate Quantity (Risk Based)", "💰 Calculate P&L (Manual Qty)"])
+with c_asset:
+    selected_group = st.selectbox("Asset Class:", list(ASSET_GROUPS.keys()))
 
-# Get Instrument Details
-inst_data = INSTRUMENTS[selected_inst]
-point_val = inst_data["val"]
-limit_size = max_minis if inst_data["type"] == "mini" else max_micros
+# Get Asset Details
+asset = ASSET_GROUPS[selected_group]
 
 # Points Input
 c_sl, c_tp = st.columns(2)
 with c_sl:
-    sl_pts = st.number_input("Stop Loss (Pts):", 1.0, 500.0, 10.0, 0.5)
+    sl_pts = st.number_input("Stop Loss (Points):", 1.0, 500.0, 10.0, 0.5)
 with c_tp:
-    tp_pts = st.number_input("Take Profit (Pts):", 1.0, 1000.0, 20.0, 0.5)
+    tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
 
-# Calculate Quantity
-qty = 0
-if "Calculate P&L" in calc_mode:
-    qty = st.number_input("Quantity:", min_value=1, value=1)
-    if qty > limit_size:
-        st.error(f"🚫 **Limit Exceeded!** Max allowed for {inst_data['type']}s is {limit_size}.")
-        st.stop()
-else:
-    risk_usd = st.number_input("Max Risk Amount ($):", value=300.0, step=10.0)
-    risk_per_con = sl_pts * point_val
-    qty = math.floor(risk_usd / risk_per_con)
+# Initialize Variables
+mini_qty, micro_qty = 0, 0
+
+# --- CALCULATION LOGIC ---
+
+if "Risk Based" in calc_mode:
+    # Input Risk
+    risk_usd = st.number_input("Max Risk Amount ($):", value=500.0, step=10.0)
     
-    if qty > limit_size:
-        st.warning(f"⚠️ **Capped at Limit:** Risk allows {qty}, but account limit is {limit_size}.")
-        qty = limit_size
-    elif qty == 0:
-        st.error(f"❌ Stop loss too wide! Min risk for 1 contract is ${risk_per_con:.0f}.")
-        st.stop()
+    # Calc Mini
+    mini_risk_per_con = sl_pts * asset["mini_val"]
+    mini_qty = math.floor(risk_usd / mini_risk_per_con)
+    # Cap Mini
+    if mini_qty > limit_mini: mini_qty = limit_mini
+    
+    # Calc Micro
+    micro_risk_per_con = sl_pts * asset["micro_val"]
+    micro_qty = math.floor(risk_usd / micro_risk_per_con)
+    # Cap Micro
+    if micro_qty > limit_micro: micro_qty = limit_micro
 
-# --- 3. Results ---
-st.divider()
-st.subheader(f"📊 Results: {qty} x {selected_inst}")
-
-risk_total = qty * sl_pts * point_val
-reward_total = qty * tp_pts * point_val
-
-m1, m2, m3 = st.columns(3)
-m1.metric("Total Risk", f"-${risk_total:,.2f}")
-m2.metric("Total Profit", f"+${reward_total:,.2f}")
-m3.metric("Risk per Contract", f"${sl_pts * point_val:.0f}")
-
-# --- 4. Rule Checks ---
-st.subheader("🛡️ Safety Check")
-
-# Drawdown Check
-dd_status = "✅ Safe"
-if daily_loss > 0 and risk_total > daily_loss:
-    st.error(f"❌ **Violates Daily Loss Limit** (${daily_loss})")
-elif risk_total > max_dd:
-    st.error(f"💀 **Account Blown** (Risk > Max DD ${max_dd})")
-elif risk_total > (max_dd * 0.5):
-    st.warning(f"⚠️ **High Risk:** Risking >50% of your drawdown space.")
 else:
-    st.success(f"✅ Risk is within drawdown limits.")
+    # Manual Input
+    c_qty_mini, c_qty_micro = st.columns(2)
+    with c_qty_mini:
+        mini_qty = st.number_input(f"Qty {asset['mini_name']}:", min_value=0, value=1)
+    with c_qty_micro:
+        micro_qty = st.number_input(f"Qty {asset['micro_name']}:", min_value=0, value=0)
 
-# Consistency Check (Eval Only)
-if stage == "Evaluation" and consistency_pct > 0:
-    max_day = profit_target * consistency_pct
-    if reward_total > max_day:
-        st.warning(f"⚠️ **Consistency Warning:** Profit (${reward_total:,.0f}) > Daily Limit (${max_day:,.0f}).")
-        st.caption("If you hit TP, this trade might trigger a consistency review.")
+
+# --- 3. DISPLAY RESULTS (Side by Side) ---
+st.divider()
+st.subheader("📊 Trade Options Comparison")
+
+col_mini, col_micro = st.columns(2)
+
+# --- LEFT COLUMN: MINI (NQ/ES) ---
+with col_mini:
+    st.markdown(f"### 🦁 {asset['mini_name']} (Mini)")
+    if mini_qty == 0:
+        st.error("Stop Loss too wide for risk amount.")
     else:
-        st.success(f"✅ Profit fits consistency rules (Limit: ${max_day:,.0f})")
+        # Mini Math
+        risk_mini = mini_qty * sl_pts * asset["mini_val"]
+        reward_mini = mini_qty * tp_pts * asset["mini_val"]
+        
+        st.info(f"**Qty: {mini_qty} Contracts**")
+        st.metric("Risk (Loss)", f"-${risk_mini:,.2f}")
+        st.metric("Reward (Profit)", f"+${reward_mini:,.2f}")
+        
+        # Rule Checks
+        if daily_loss > 0 and risk_mini > daily_loss:
+            st.warning(f"⚠️ Exceeds Daily Loss (${daily_loss})")
+        if risk_mini > max_dd:
+            st.error(f"💀 BLOWS ACCOUNT (DD: {max_dd})")
 
-# Funding Info
-st.caption(f"Calculated using {selected_inst} @ ${point_val}/point.")
+# --- RIGHT COLUMN: MICRO (MNQ/MES) ---
+with col_micro:
+    st.markdown(f"### 🐭 {asset['micro_name']} (Micro)")
+    if micro_qty == 0:
+        st.error("Stop Loss too wide.")
+    else:
+        # Micro Math
+        risk_micro = micro_qty * sl_pts * asset["micro_val"]
+        reward_micro = micro_qty * tp_pts * asset["micro_val"]
+        
+        st.success(f"**Qty: {micro_qty} Contracts**")
+        st.metric("Risk (Loss)", f"-${risk_micro:,.2f}")
+        st.metric("Reward (Profit)", f"+${reward_micro:,.2f}")
+        
+        # Micro Benefit Calculation
+        st.caption(f"💡 **Granularity:** You can trim this position in {micro_qty} parts.")
+
+# --- 4. CONSISTENCY CHECK (Global) ---
+if stage == "Evaluation" and consistency_pct > 0:
+    st.divider()
+    max_day = profit_target * consistency_pct
+    st.write(f"**Consistency Limit:** ${max_day:,.0f}")
+    
+    # Check if Mini violates
+    if mini_qty > 0:
+        mini_reward = mini_qty * tp_pts * asset["mini_val"]
+        if mini_reward > max_day:
+            st.warning(f"⚠️ **{asset['mini_name']} Warning:** Hitting TP (${mini_reward:,.0f}) will exceed your daily consistency limit.")
+        else:
+            st.caption(f"✅ {asset['mini_name']} TP is safe.")
+            
+    # Check if Micro violates
+    if micro_qty > 0:
+        micro_reward = micro_qty * tp_pts * asset["micro_val"]
+        if micro_reward > max_day:
+            st.warning(f"⚠️ **{asset['micro_name']} Warning:** Hitting TP (${micro_reward:,.0f}) will exceed your daily consistency limit.")
