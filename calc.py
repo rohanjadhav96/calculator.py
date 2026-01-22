@@ -77,75 +77,101 @@ with st.expander("📝 Account Rules (Click to Edit)", expanded=False):
         limit_micro = st.number_input("Max Micros", defaults["max_micros"], disabled=not is_custom)
         daily_loss = st.number_input("Daily Loss Limit ($)", defaults["daily_loss"], disabled=not is_custom)
 
-# --- 2. TRADING POWER (Simplified) ---
-st.subheader("🛡️ Trading Power")
+# --- 2. TRADING POWER & INPUTS GRID ---
 
+# A. Risk Budget Display
 if risk_budget <= 0:
     st.error(f"🚫 TRADING HALTED: You have hit your Liquidation Price.")
     st.stop()
 else:
-    # Color logic for the budget number
     color = "#00ff00" if risk_budget > 1000 else "#ffaa00" if risk_budget > 500 else "#ff4b4b"
-    
-    # Simplified Display: No Progress Bar, Just the Number
     st.markdown(f"""
-    <div style="text-align:center; padding:15px; border-radius:10px; background-color: #262730; border: 1px solid #444; margin-bottom: 20px;">
-        <h2 style='margin:0; color: {color}; font-size: 32px;'>${risk_budget:,.2f}</h2>
-        <p style='margin:0; color: #aaa; font-size: 14px;'>Available Risk Budget</p>
+    <div style="text-align:center; padding:10px; border-radius:10px; background-color: #262730; border: 1px solid #444; margin-bottom: 15px;">
+        <h3 style='margin:0; color: #aaa; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;'>Available Risk Budget</h3>
+        <h2 style='margin:0; color: {color}; font-size: 36px; font-weight: 700;'>${risk_budget:,.2f}</h2>
     </div>
     """, unsafe_allow_html=True)
 
-# --- 3. CALCULATOR UI ---
+# B. Control Deck (Container for Inputs)
+with st.container():
+    # Row 1: Instrument & Mode
+    c_inst, c_mode = st.columns([2, 1])
+    with c_inst:
+        instrument_mode = st.selectbox(
+            "Select Instrument / View:",
+            [
+                "Compare: Nasdaq (NQ & MNQ)",
+                "Compare: S&P 500 (ES & MES)",
+                "---",
+                "Single: NQ (Mini)",
+                "Single: MNQ (Micro)",
+                "Single: ES (Mini)",
+                "Single: MES (Micro)"
+            ]
+        )
+    with c_mode:
+        calc_mode = st.radio("Mode:", ["Risk Based ($)", "Manual Qty"], horizontal=True)
 
-# Unified Dropdown for easier selection
-instrument_mode = st.selectbox(
-    "Select Instrument / View:",
-    [
-        "Compare: Nasdaq (NQ & MNQ)",
-        "Compare: S&P 500 (ES & MES)",
-        "---",
-        "Single: NQ (Mini)",
-        "Single: MNQ (Micro)",
-        "Single: ES (Mini)",
-        "Single: MES (Micro)"
-    ]
-)
+    # Determine View & Data
+    if "Compare: Nasdaq" in instrument_mode:
+        view_mode = "Comparison"
+        data = {"mini":"NQ", "micro":"MNQ", "mini_val":20, "micro_val":2}
+    elif "Compare: S&P" in instrument_mode:
+        view_mode = "Comparison"
+        data = {"mini":"ES", "micro":"MES", "mini_val":50, "micro_val":5}
+    elif "---" in instrument_mode:
+        st.warning("Please select an instrument.")
+        st.stop()
+    else:
+        view_mode = "Single"
+        if "NQ" in instrument_mode: data = {"name": "NQ", "val": 20, "type": "mini"}
+        elif "MNQ" in instrument_mode: data = {"name": "MNQ", "val": 2, "type": "micro"}
+        elif "ES" in instrument_mode: data = {"name": "ES", "val": 50, "type": "mini"}
+        elif "MES" in instrument_mode: data = {"name": "MES", "val": 5, "type": "micro"}
 
-# Parse Selection
-if "Compare: Nasdaq" in instrument_mode:
-    view_mode = "Comparison"
-    data = {"mini":"NQ", "micro":"MNQ", "mini_val":20, "micro_val":2}
-elif "Compare: S&P" in instrument_mode:
-    view_mode = "Comparison"
-    data = {"mini":"ES", "micro":"MES", "mini_val":50, "micro_val":5}
-elif "---" in instrument_mode:
-    st.warning("Please select an instrument.")
-    st.stop()
-else:
-    # Single Mode
-    view_mode = "Single"
-    # Extract name from string (e.g., "Single: NQ (Mini)" -> "NQ")
-    if "NQ" in instrument_mode:
-        data = {"name": "NQ", "val": 20, "type": "mini"}
-    elif "MNQ" in instrument_mode:
-        data = {"name": "MNQ", "val": 2, "type": "micro"}
-    elif "ES" in instrument_mode:
-        data = {"name": "ES", "val": 50, "type": "mini"}
-    elif "MES" in instrument_mode:
-        data = {"name": "MES", "val": 5, "type": "micro"}
+    # Row 2: Trade Parameters (SL, TP, Risk/Qty)
+    st.markdown("---")
+    
+    # We create 3 columns. The 3rd column changes based on "Risk" vs "Manual" mode.
+    col_sl, col_tp, col_input = st.columns(3)
+    
+    with col_sl:
+        sl_pts = st.number_input("Stop Loss (Points):", 1.0, 500.0, 10.0, 0.5)
+    with col_tp:
+        tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
+    
+    # Logic for Column 3
+    user_risk_input = 0
+    q_mini, q_micro, q_single = 0, 0, 0
+    
+    with col_input:
+        if "Risk Based" in calc_mode:
+            rec_risk = min(500.0, float(risk_budget))
+            user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
+            
+            # Perform Calc immediately to keep logic clean
+            if view_mode == "Comparison":
+                q_mini = math.floor(user_risk_input / (sl_pts * data["mini_val"]))
+                q_micro = math.floor(user_risk_input / (sl_pts * data["micro_val"]))
+            else:
+                q_single = math.floor(user_risk_input / (sl_pts * data["val"]))
+        else:
+            # Manual Qty Mode
+            if view_mode == "Comparison":
+                st.caption("Manual Qty Input Below 👇") # Placeholder as we need 2 inputs for comparison
+                user_risk_input = float('inf') 
+            else:
+                q_single = st.number_input("Quantity:", 1, 1000, 1)
+                user_risk_input = float('inf')
 
-st.divider()
+    # Special Case: Manual Mode + Comparison needs a 4th row because we can't fit 2 inputs in 1 column easily
+    if "Manual" in calc_mode and view_mode == "Comparison":
+        c_q1, c_q2 = st.columns(2)
+        with c_q1: q_mini = st.number_input(f"Qty {data['mini']}", 0, 100, 1)
+        with c_q2: q_micro = st.number_input(f"Qty {data['micro']}", 0, 1000, 1)
 
-# Inputs
-c1, c2, c3 = st.columns([1, 1, 1])
-with c1:
-    calc_mode = st.radio("Calculation Mode:", ["Risk Based ($)", "Manual Qty"])
-with c2:
-    sl_pts = st.number_input("Stop Loss (Points):", 1.0, 500.0, 10.0, 0.5)
-with c3:
-    tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
 
-# --- 4. CALCULATION ENGINE ---
+# --- 3. CALCULATION ENGINE ---
 def calculate_stats(qty, point_val, is_micro):
     if qty == 0: return None
     gross_risk = qty * sl_pts * point_val
@@ -157,68 +183,43 @@ def calculate_stats(qty, point_val, is_micro):
     }
 
 def get_rejection_reason(sl, val, user_risk, account_budget):
-    """Diagnose why the trade quantity is zero (Plain Text)"""
     one_contract_risk = sl * val
-    
     if one_contract_risk > account_budget:
-        return f"Insufficient Funds: 1 contract risks ${one_contract_risk:,.2f} but you only have ${account_budget:,.2f} available."
+        return f"Insufficient Funds: 1 contract risks ${one_contract_risk:,.2f} but you only have ${account_budget:,.2f}."
     elif one_contract_risk > user_risk:
-        return f"Exceeds User Risk Limit: 1 contract risks ${one_contract_risk:,.2f} but you only wanted to risk ${user_risk:,.2f}."
+        return f"Exceeds Risk Limit: 1 contract risks ${one_contract_risk:,.2f} but limit is ${user_risk:,.2f}."
     else:
-        return "Quantity is 0. Increase risk amount or decrease Stop Loss."
+        return "Quantity is 0. Adjust inputs."
 
-# --- 5. RULE GUARDIAN (Plain Text) ---
-def check_violations(stats, limit_qty, type_name):
+def check_violations(stats, limit_qty):
     violations = []
     if not stats: return []
-    
-    # 1. Liquidation Check
     if stats["net_risk"] > risk_budget:
-        violations.append(f"CRITICAL: Risk (${stats['net_risk']:,.2f}) > Available Funds (${risk_budget:,.2f}).")
-    
-    # 2. Daily Loss Check
+        violations.append(f"CRITICAL: Risk (${stats['net_risk']:,.2f}) > Available Budget.")
     if daily_loss > 0 and stats["net_risk"] > daily_loss:
-        violations.append(f"Daily Limit: Risk (${stats['net_risk']:,.2f}) > Daily Loss Limit (${daily_loss:,.2f}).")
-    
-    # 3. Max Size Check
+        violations.append(f"Daily Limit: Risk (${stats['net_risk']:,.2f}) > Limit (${daily_loss:,.2f}).")
     if stats["qty"] > limit_qty:
-        violations.append(f"Size Violation: {stats['qty']} contracts > Max Allowed ({limit_qty}).")
-    
-    # 4. Consistency Check
+        violations.append(f"Size Violation: {stats['qty']} > Max ({limit_qty}).")
     if stage == "Evaluation" and defaults["consistency"] > 0:
         limit_val = defaults["target"] * defaults["consistency"]
         if stats["gross"] > limit_val:
-            violations.append(f"Consistency Warning: Profit (${stats['gross']:,.2f}) exceeds Limit (${limit_val:,.2f}).")
-            
+            violations.append(f"Consistency Warning: Profit (${stats['gross']:,.0f}) > Limit (${limit_val:,.0f}).")
     return violations
 
-# --- 6. RENDER RESULTS ---
+
+# --- 4. RENDER RESULTS ---
 st.divider()
 
 if view_mode == "Comparison":
-    # Auto-Calc Logic
-    if "Risk Based" in calc_mode:
-        rec_risk = min(500.0, float(risk_budget))
-        user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
-        q_mini = math.floor(user_risk_input / (sl_pts * data["mini_val"]))
-        q_micro = math.floor(user_risk_input / (sl_pts * data["micro_val"]))
-    else:
-        col_q1, col_q2 = st.columns(2)
-        q_mini = col_q1.number_input(f"Qty {data['mini']}", 0, 100, 1)
-        q_micro = col_q2.number_input(f"Qty {data['micro']}", 0, 1000, 1)
-        user_risk_input = float('inf')
-
-    # Get Stats
     stats_mini = calculate_stats(q_mini, data["mini_val"], False)
     stats_micro = calculate_stats(q_micro, data["micro_val"], True)
     
-    # Check Violations
-    warn_mini = check_violations(stats_mini, defaults["max_minis"], "Mini")
-    warn_micro = check_violations(stats_micro, defaults["max_micros"], "Micro")
+    warn_mini = check_violations(stats_mini, defaults["max_minis"])
+    warn_micro = check_violations(stats_micro, defaults["max_micros"])
 
     col_a, col_b = st.columns(2)
     
-    # --- MINI COLUMN ---
+    # Mini Card
     with col_a:
         st.subheader(f"🦁 {data['mini']} (Mini)")
         if stats_mini:
@@ -226,14 +227,15 @@ if view_mode == "Comparison":
                 for w in warn_mini: st.error(w)
             else:
                 st.success("✅ Trade Approved")
-            st.info(f"Size: {stats_mini['qty']}")
-            st.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
-            st.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
-        else:
-            reason = get_rejection_reason(sl_pts, data["mini_val"], user_risk_input, risk_budget)
-            st.warning(reason)
             
-    # --- MICRO COLUMN ---
+            c_res1, c_res2 = st.columns(2)
+            c_res1.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
+            c_res2.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
+            st.info(f"Size: **{stats_mini['qty']}**")
+        else:
+            st.warning(get_rejection_reason(sl_pts, data["mini_val"], user_risk_input, risk_budget))
+
+    # Micro Card
     with col_b:
         st.subheader(f"🐭 {data['micro']} (Micro)")
         if stats_micro:
@@ -241,31 +243,22 @@ if view_mode == "Comparison":
                 for w in warn_micro: st.error(w)
             else:
                 st.success("✅ Trade Approved")
-            st.info(f"Size: {stats_micro['qty']}")
-            st.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
-            st.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
+            
+            c_res1, c_res2 = st.columns(2)
+            c_res1.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
+            c_res2.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
+            st.info(f"Size: **{stats_micro['qty']}**")
         else:
-            reason = get_rejection_reason(sl_pts, data["micro_val"], user_risk_input, risk_budget)
-            st.warning(reason)
+            st.warning(get_rejection_reason(sl_pts, data["micro_val"], user_risk_input, risk_budget))
 
 else:
-    # Single View Logic
+    # Single View
     limit = defaults["max_minis"] if data["type"] == "mini" else defaults["max_micros"]
-    if "Risk Based" in calc_mode:
-        rec_risk = min(500.0, float(risk_budget))
-        user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
-        qty = math.floor(user_risk_input / (sl_pts * data["val"]))
-    else:
-        qty = st.number_input("Quantity:", 1, 1000, 1)
-        user_risk_input = float('inf')
-
-    stats = calculate_stats(qty, data["val"], data["type"] == "micro")
+    stats = calculate_stats(q_single, data["val"], data["type"] == "micro")
     
     st.subheader(f"📊 {data['name']} Analysis")
-    
     if stats:
-        warnings = check_violations(stats, limit, "Single")
-        
+        warnings = check_violations(stats, limit)
         if warnings:
             for w in warnings: st.error(w)
         else:
@@ -274,10 +267,6 @@ else:
         m1, m2, m3 = st.columns(3)
         m1.metric("Net Risk", f"-${stats['net_risk']:,.2f}")
         m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
-        m3.metric("R:R", f"1 : {tp_pts/sl_pts:.1f}")
-        
-        st.info(f"Size: {stats['qty']} Contracts")
-        
+        m3.metric("Size", f"{stats['qty']} Contracts")
     else:
-        reason = get_rejection_reason(sl_pts, data["val"], user_risk_input, risk_budget)
-        st.warning(reason)
+        st.warning(get_rejection_reason(sl_pts, data["val"], user_risk_input, risk_budget))
