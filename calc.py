@@ -81,7 +81,7 @@ with st.expander("📝 Account Rules (Click to Edit)", expanded=False):
 st.subheader("🛡️ Trading Power")
 
 if risk_budget <= 0:
-    st.error(f"🚫 **TRADING HALTED:** You have hit your Liquidation Price.")
+    st.error(f"🚫 TRADING HALTED: You have hit your Liquidation Price.")
     st.stop()
 else:
     pct_health = min(1.0, risk_budget / defaults["max_dd"])
@@ -136,33 +136,39 @@ def get_rejection_reason(sl, val, user_risk, account_budget):
     one_contract_risk = sl * val
     
     if one_contract_risk > account_budget:
-        return f"💀 **Insufficient Account Funds:**\n\n1 contract risks **${one_contract_risk:,.0f}**, but you only have **${account_budget:,.0f}** before liquidation."
+        return f"Insufficient Funds. 1 Contract Risks ${one_contract_risk:,.2f} but you only have ${account_budget:,.2f} available."
     elif one_contract_risk > user_risk:
-        return f"📉 **Exceeds User Risk Limit:**\n\n1 contract risks **${one_contract_risk:,.0f}**, but you only wanted to risk **${user_risk:,.0f}**."
+        return f"Exceeds User Risk Limit. 1 Contract Risks ${one_contract_risk:,.2f} but you set your limit to ${user_risk:,.2f}."
     else:
-        return "⚠️ Quantity is 0. Increase risk amount or decrease Stop Loss."
+        return "Quantity is 0. Increase risk amount or decrease Stop Loss."
 
 # --- 5. THE WARNING SYSTEM (Rule Guardian) ---
 def check_violations(stats, limit_qty, type_name):
     violations = []
     if not stats: return []
+    
+    # 1. Liquidation Check
     if stats["net_risk"] > risk_budget:
-        violations.append(f"❌ **CRITICAL:** Risk (${stats['net_risk']:.0f}) > Available Funds (${risk_budget:.0f}). You will be liquidated.")
+        violations.append(f"CRITICAL: Risk (${stats['net_risk']:,.2f}) > Available Funds (${risk_budget:,.2f}).")
+    
+    # 2. Daily Loss Check
     if daily_loss > 0 and stats["net_risk"] > daily_loss:
-        violations.append(f"❌ **Daily Limit:** Risk (${stats['net_risk']:.0f}) exceeds Daily Loss Limit (${daily_loss}).")
+        violations.append(f"Daily Limit: Risk (${stats['net_risk']:,.2f}) > Daily Loss Limit (${daily_loss:,.2f}).")
+    
+    # 3. Max Size Check
     if stats["qty"] > limit_qty:
-        violations.append(f"⚠️ **Size Violation:** {stats['qty']} contracts > Max Allowed ({limit_qty}).")
+        violations.append(f"Size Violation: {stats['qty']} contracts > Max Allowed ({limit_qty}).")
+    
+    # 4. Consistency Check
     if stage == "Evaluation" and defaults["consistency"] > 0:
         limit_val = defaults["target"] * defaults["consistency"]
         if stats["gross"] > limit_val:
-            violations.append(f"⚠️ **Consistency Risk:** Profit (${stats['gross']:.0f}) > 50% Daily Limit (${limit_val:.0f}).")
+            violations.append(f"Consistency Warning: Profit (${stats['gross']:,.2f}) exceeds Limit (${limit_val:,.2f}).")
+            
     return violations
 
 # --- 6. RENDER RESULTS ---
 st.divider()
-
-# Variables to hold inputs for diagnostics
-user_risk_input = 0 
 
 if "Comparison" in view_mode:
     # Auto-Calc Logic
@@ -175,7 +181,6 @@ if "Comparison" in view_mode:
         col_q1, col_q2 = st.columns(2)
         q_mini = col_q1.number_input(f"Qty {data['mini']}", 0, 100, 1)
         q_micro = col_q2.number_input(f"Qty {data['micro']}", 0, 1000, 1)
-        # In manual mode, we treat "user risk" as infinite since they set quantity directly
         user_risk_input = float('inf')
 
     # Get Stats
@@ -196,11 +201,11 @@ if "Comparison" in view_mode:
                 for w in warn_mini: st.error(w)
             else:
                 st.success("✅ Trade Approved")
-            st.info(f"Size: **{stats_mini['qty']}**")
+            st.info(f"Size: {stats_mini['qty']}")
             st.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
             st.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
         else:
-            # DIAGNOSTIC MESSAGE
+            # SIMPLE DIAGNOSTIC MESSAGE
             reason = get_rejection_reason(sl_pts, data["mini_val"], user_risk_input, risk_budget)
             st.warning(reason)
             
@@ -212,11 +217,11 @@ if "Comparison" in view_mode:
                 for w in warn_micro: st.error(w)
             else:
                 st.success("✅ Trade Approved")
-            st.info(f"Size: **{stats_micro['qty']}**")
+            st.info(f"Size: {stats_micro['qty']}")
             st.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
             st.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
         else:
-            # DIAGNOSTIC MESSAGE
+            # SIMPLE DIAGNOSTIC MESSAGE
             reason = get_rejection_reason(sl_pts, data["micro_val"], user_risk_input, risk_budget)
             st.warning(reason)
 
@@ -245,7 +250,6 @@ else:
         m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
         m3.metric("R:R", f"1 : {tp_pts/sl_pts:.1f}")
     else:
-        # DIAGNOSTIC MESSAGE (Single View)
         st.subheader(f"📊 {data['name']} Analysis")
         reason = get_rejection_reason(sl_pts, data["val"], user_risk_input, risk_budget)
         st.warning(reason)
