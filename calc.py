@@ -131,47 +131,52 @@ def calculate_stats(qty, point_val, is_micro):
         "net_reward": gross_reward - comm, "gross": gross_reward
     }
 
+def get_rejection_reason(sl, val, user_risk, account_budget):
+    """Diagnose why the trade quantity is zero"""
+    one_contract_risk = sl * val
+    
+    if one_contract_risk > account_budget:
+        return f"💀 **Insufficient Account Funds:**\n\n1 contract risks **${one_contract_risk:,.0f}**, but you only have **${account_budget:,.0f}** before liquidation."
+    elif one_contract_risk > user_risk:
+        return f"📉 **Exceeds User Risk Limit:**\n\n1 contract risks **${one_contract_risk:,.0f}**, but you only wanted to risk **${user_risk:,.0f}**."
+    else:
+        return "⚠️ Quantity is 0. Increase risk amount or decrease Stop Loss."
+
 # --- 5. THE WARNING SYSTEM (Rule Guardian) ---
 def check_violations(stats, limit_qty, type_name):
-    """Returns a list of warnings if rules are broken"""
     violations = []
-    
     if not stats: return []
-
-    # 1. Liquidation Check (Ultimate Death Line)
     if stats["net_risk"] > risk_budget:
         violations.append(f"❌ **CRITICAL:** Risk (${stats['net_risk']:.0f}) > Available Funds (${risk_budget:.0f}). You will be liquidated.")
-
-    # 2. Daily Loss Limit (If it exists)
     if daily_loss > 0 and stats["net_risk"] > daily_loss:
         violations.append(f"❌ **Daily Limit:** Risk (${stats['net_risk']:.0f}) exceeds Daily Loss Limit (${daily_loss}).")
-
-    # 3. Max Contract Size
     if stats["qty"] > limit_qty:
         violations.append(f"⚠️ **Size Violation:** {stats['qty']} contracts > Max Allowed ({limit_qty}).")
-
-    # 4. Consistency Rule (Evaluation Only)
     if stage == "Evaluation" and defaults["consistency"] > 0:
         limit_val = defaults["target"] * defaults["consistency"]
         if stats["gross"] > limit_val:
-            violations.append(f"⚠️ **Consistency Risk:** Profit (${stats['gross']:.0f}) > 50% Daily Limit (${limit_val:.0f}). This trade won't fully count.")
-
+            violations.append(f"⚠️ **Consistency Risk:** Profit (${stats['gross']:.0f}) > 50% Daily Limit (${limit_val:.0f}).")
     return violations
 
 # --- 6. RENDER RESULTS ---
 st.divider()
 
+# Variables to hold inputs for diagnostics
+user_risk_input = 0 
+
 if "Comparison" in view_mode:
     # Auto-Calc Logic
     if "Risk Based" in calc_mode:
         rec_risk = min(500.0, float(risk_budget))
-        input_risk = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
-        q_mini = math.floor(input_risk / (sl_pts * data["mini_val"])) # Uncapped for now to show warnings
-        q_micro = math.floor(input_risk / (sl_pts * data["micro_val"]))
+        user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
+        q_mini = math.floor(user_risk_input / (sl_pts * data["mini_val"]))
+        q_micro = math.floor(user_risk_input / (sl_pts * data["micro_val"]))
     else:
         col_q1, col_q2 = st.columns(2)
         q_mini = col_q1.number_input(f"Qty {data['mini']}", 0, 100, 1)
         q_micro = col_q2.number_input(f"Qty {data['micro']}", 0, 1000, 1)
+        # In manual mode, we treat "user risk" as infinite since they set quantity directly
+        user_risk_input = float('inf')
 
     # Get Stats
     stats_mini = calculate_stats(q_mini, data["mini_val"], False)
@@ -187,60 +192,60 @@ if "Comparison" in view_mode:
     with col_a:
         st.subheader(f"🦁 {data['mini']} (Mini)")
         if stats_mini:
-            # Display Warning Box if violations exist
             if warn_mini:
                 for w in warn_mini: st.error(w)
             else:
                 st.success("✅ Trade Approved")
-
             st.info(f"Size: **{stats_mini['qty']}**")
             st.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
             st.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
         else:
-            st.warning("Enter valid inputs.")
+            # DIAGNOSTIC MESSAGE
+            reason = get_rejection_reason(sl_pts, data["mini_val"], user_risk_input, risk_budget)
+            st.warning(reason)
             
     # --- MICRO COLUMN ---
     with col_b:
         st.subheader(f"🐭 {data['micro']} (Micro)")
         if stats_micro:
-            # Display Warning Box if violations exist
             if warn_micro:
                 for w in warn_micro: st.error(w)
             else:
                 st.success("✅ Trade Approved")
-                
             st.info(f"Size: **{stats_micro['qty']}**")
             st.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
             st.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
         else:
-            st.warning("Enter valid inputs.")
+            # DIAGNOSTIC MESSAGE
+            reason = get_rejection_reason(sl_pts, data["micro_val"], user_risk_input, risk_budget)
+            st.warning(reason)
 
 else:
     # Single View Logic
     limit = defaults["max_minis"] if data["type"] == "mini" else defaults["max_micros"]
     if "Risk Based" in calc_mode:
         rec_risk = min(500.0, float(risk_budget))
-        input_risk = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
-        qty = math.floor(input_risk / (sl_pts * data["val"]))
+        user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
+        qty = math.floor(user_risk_input / (sl_pts * data["val"]))
     else:
         qty = st.number_input("Quantity:", 1, 1000, 1)
+        user_risk_input = float('inf')
 
     stats = calculate_stats(qty, data["val"], data["type"] == "micro")
     
     if stats:
-        # Check Violations
         warnings = check_violations(stats, limit, "Single")
-        
         st.subheader(f"📊 {data['name']} Analysis")
-        
-        # DISPLAY WARNINGS AT TOP OF CARD
         if warnings:
-            for w in warnings:
-                st.error(w)
+            for w in warnings: st.error(w)
         else:
             st.success("✅ Trade Rules Passed")
-
         m1, m2, m3 = st.columns(3)
         m1.metric("Net Risk", f"-${stats['net_risk']:,.2f}")
         m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
         m3.metric("R:R", f"1 : {tp_pts/sl_pts:.1f}")
+    else:
+        # DIAGNOSTIC MESSAGE (Single View)
+        st.subheader(f"📊 {data['name']} Analysis")
+        reason = get_rejection_reason(sl_pts, data["val"], user_risk_input, risk_budget)
+        st.warning(reason)
