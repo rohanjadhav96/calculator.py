@@ -2,7 +2,7 @@ import streamlit as st
 import math
 
 # --- Page Config ---
-st.set_page_config(page_title="Prop Command Center", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Prop Command Center", page_icon="🛡️", layout="wide")
 
 # --- Constants ---
 COMMISSIONS = {
@@ -29,13 +29,12 @@ PRESETS = {
     }
 }
 
-st.title("🚀 Prop Command Center")
+st.title("🛡️ Prop Command Center")
 
 # --- SIDEBAR: LIVE SESSION DATA ---
 with st.sidebar:
     st.header("🔴 Live Session Data")
     
-    # Account Balance Inputs
     current_balance = st.number_input(
         "Current Account Balance ($):", 
         value=50000.0, step=100.0,
@@ -45,18 +44,14 @@ with st.sidebar:
     liq_price = st.number_input(
         "Liquidation Price (Hard Stop) ($):", 
         value=48000.0, step=100.0,
-        help="The EXACT price where your account is blown.\n\nCopy this number from your Rithmic/Tradovate dashboard (look for 'Auto-Liquidate Threshold')."
+        help="The EXACT price where your account is blown. (Copy from Rithmic/Tradovate 'Auto-Liquidate Threshold')."
     )
     
-    # Calculate Risk Budget immediately
+    # Calculate Risk Budget
     risk_budget = max(0.0, current_balance - liq_price)
     
     st.divider()
-    use_commissions = st.checkbox(
-        "Include Commissions?", 
-        value=True,
-        help="Subtracts ~$4.00 (Mini) or ~$0.88 (Micro) per contract from P&L."
-    )
+    use_commissions = st.checkbox("Include Commissions?", value=True)
     
     st.divider()
     st.caption("⚙️ Configuration")
@@ -89,7 +84,6 @@ if risk_budget <= 0:
     st.error(f"🚫 **TRADING HALTED:** You have hit your Liquidation Price.")
     st.stop()
 else:
-    # Visual Health Bar
     pct_health = min(1.0, risk_budget / defaults["max_dd"])
     color = "green" if pct_health > 0.5 else "orange" if pct_health > 0.25 else "red"
     
@@ -103,8 +97,6 @@ else:
         """, unsafe_allow_html=True)
     with col_health2:
         st.progress(pct_health, text="Distance to Liquidation")
-        if risk_budget < 500:
-            st.warning(f"⚠️ **Danger Zone:** Only ${risk_budget:.0f} risk remaining!")
 
 st.divider()
 
@@ -124,12 +116,11 @@ with c3:
         type_ = "mini" if single_asset in ["NQ", "ES"] else "micro"
         data = {"name":single_asset, "val":map_[single_asset], "type":type_}
 
-# Points
 c_sl, c_tp = st.columns(2)
-sl_pts = c_sl.number_input("Stop Loss (Pts):", 1.0, 500.0, 10.0, 0.5, help="Points of risk.")
-tp_pts = c_tp.number_input("Take Profit (Pts):", 1.0, 1000.0, 20.0, 0.5, help="Target points.")
+sl_pts = c_sl.number_input("Stop Loss (Pts):", 1.0, 500.0, 10.0, 0.5)
+tp_pts = c_tp.number_input("Take Profit (Pts):", 1.0, 1000.0, 20.0, 0.5)
 
-# --- ENGINE ---
+# --- 4. CALCULATION ENGINE ---
 def calculate_stats(qty, point_val, is_micro):
     if qty == 0: return None
     gross_risk = qty * sl_pts * point_val
@@ -137,75 +128,119 @@ def calculate_stats(qty, point_val, is_micro):
     comm = (COMMISSIONS["micro"] if is_micro else COMMISSIONS["mini"]) * qty if use_commissions else 0
     return {
         "qty": qty, "net_risk": gross_risk + comm, 
-        "net_reward": gross_reward - comm, "comm": comm, "gross": gross_reward
+        "net_reward": gross_reward - comm, "gross": gross_reward
     }
 
-# --- RESULTS ---
+# --- 5. THE WARNING SYSTEM (Rule Guardian) ---
+def check_violations(stats, limit_qty, type_name):
+    """Returns a list of warnings if rules are broken"""
+    violations = []
+    
+    if not stats: return []
+
+    # 1. Liquidation Check (Ultimate Death Line)
+    if stats["net_risk"] > risk_budget:
+        violations.append(f"❌ **CRITICAL:** Risk (${stats['net_risk']:.0f}) > Available Funds (${risk_budget:.0f}). You will be liquidated.")
+
+    # 2. Daily Loss Limit (If it exists)
+    if daily_loss > 0 and stats["net_risk"] > daily_loss:
+        violations.append(f"❌ **Daily Limit:** Risk (${stats['net_risk']:.0f}) exceeds Daily Loss Limit (${daily_loss}).")
+
+    # 3. Max Contract Size
+    if stats["qty"] > limit_qty:
+        violations.append(f"⚠️ **Size Violation:** {stats['qty']} contracts > Max Allowed ({limit_qty}).")
+
+    # 4. Consistency Rule (Evaluation Only)
+    if stage == "Evaluation" and defaults["consistency"] > 0:
+        limit_val = defaults["target"] * defaults["consistency"]
+        if stats["gross"] > limit_val:
+            violations.append(f"⚠️ **Consistency Risk:** Profit (${stats['gross']:.0f}) > 50% Daily Limit (${limit_val:.0f}). This trade won't fully count.")
+
+    return violations
+
+# --- 6. RENDER RESULTS ---
 st.divider()
 
 if "Comparison" in view_mode:
-    # Auto-Calc
+    # Auto-Calc Logic
     if "Risk Based" in calc_mode:
         rec_risk = min(500.0, float(risk_budget))
-        input_risk = st.number_input(
-            "Willing to Risk ($):", 50.0, float(risk_budget), rec_risk, 10.0,
-            help=f"Enter amount to risk. Cannot exceed available budget (${risk_budget:.0f})."
-        )
-        
-        q_mini = min(math.floor(input_risk / (sl_pts * data["mini_val"])), defaults["max_minis"])
-        q_micro = min(math.floor(input_risk / (sl_pts * data["micro_val"])), defaults["max_micros"])
+        input_risk = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
+        q_mini = math.floor(input_risk / (sl_pts * data["mini_val"])) # Uncapped for now to show warnings
+        q_micro = math.floor(input_risk / (sl_pts * data["micro_val"]))
     else:
         col_q1, col_q2 = st.columns(2)
-        q_mini = col_q1.number_input(f"Qty {data['mini']}", 0, defaults["max_minis"], 1)
-        q_micro = col_q2.number_input(f"Qty {data['micro']}", 0, defaults["max_micros"], 1)
+        q_mini = col_q1.number_input(f"Qty {data['mini']}", 0, 100, 1)
+        q_micro = col_q2.number_input(f"Qty {data['micro']}", 0, 1000, 1)
 
-    # Render
+    # Get Stats
     stats_mini = calculate_stats(q_mini, data["mini_val"], False)
     stats_micro = calculate_stats(q_micro, data["micro_val"], True)
     
+    # Check Violations
+    warn_mini = check_violations(stats_mini, defaults["max_minis"], "Mini")
+    warn_micro = check_violations(stats_micro, defaults["max_micros"], "Micro")
+
     col_a, col_b = st.columns(2)
+    
+    # --- MINI COLUMN ---
     with col_a:
         st.subheader(f"🦁 {data['mini']} (Mini)")
         if stats_mini:
+            # Display Warning Box if violations exist
+            if warn_mini:
+                for w in warn_mini: st.error(w)
+            else:
+                st.success("✅ Trade Approved")
+
             st.info(f"Size: **{stats_mini['qty']}**")
-            # Highlight Risk if it's close to budget
-            risk_color = "red" if stats_mini['net_risk'] > (risk_budget * 0.9) else "normal"
-            st.metric("Net Risk", f"-${stats_mini['net_risk']:,.2f}")
-            st.metric("Net Profit", f"+${stats_mini['net_reward']:,.2f}")
+            st.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
+            st.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
         else:
-            st.warning("Size 0 (Risk > Budget?)")
+            st.warning("Enter valid inputs.")
             
+    # --- MICRO COLUMN ---
     with col_b:
         st.subheader(f"🐭 {data['micro']} (Micro)")
         if stats_micro:
+            # Display Warning Box if violations exist
+            if warn_micro:
+                for w in warn_micro: st.error(w)
+            else:
+                st.success("✅ Trade Approved")
+                
             st.info(f"Size: **{stats_micro['qty']}**")
-            st.metric("Net Risk", f"-${stats_micro['net_risk']:,.2f}")
-            st.metric("Net Profit", f"+${stats_micro['net_reward']:,.2f}")
+            st.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
+            st.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
         else:
-            st.warning("Size 0")
+            st.warning("Enter valid inputs.")
 
 else:
     # Single View Logic
     limit = defaults["max_minis"] if data["type"] == "mini" else defaults["max_micros"]
     if "Risk Based" in calc_mode:
         rec_risk = min(500.0, float(risk_budget))
-        input_risk = st.number_input("Willing to Risk ($):", 50.0, float(risk_budget), rec_risk, 10.0)
-        qty = min(math.floor(input_risk / (sl_pts * data["val"])), limit)
+        input_risk = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
+        qty = math.floor(input_risk / (sl_pts * data["val"]))
     else:
-        qty = st.number_input("Quantity:", 1, limit, 1)
+        qty = st.number_input("Quantity:", 1, 1000, 1)
 
     stats = calculate_stats(qty, data["val"], data["type"] == "micro")
+    
     if stats:
+        # Check Violations
+        warnings = check_violations(stats, limit, "Single")
+        
         st.subheader(f"📊 {data['name']} Analysis")
+        
+        # DISPLAY WARNINGS AT TOP OF CARD
+        if warnings:
+            for w in warnings:
+                st.error(w)
+        else:
+            st.success("✅ Trade Rules Passed")
+
         m1, m2, m3 = st.columns(3)
         m1.metric("Net Risk", f"-${stats['net_risk']:,.2f}")
         m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
         m3.metric("R:R", f"1 : {tp_pts/sl_pts:.1f}")
-        
-        # Consistency Check
-        if stage == "Evaluation" and defaults["consistency"] > 0:
-            limit_val = defaults["target"] * defaults["consistency"]
-            if stats["gross"] > limit_val:
-                st.warning(f"⚠️ **Consistency Warning:** Profit > ${limit_val:.0f}")
-            else:
-                st.success(f"✅ Safe (Profit < ${limit_val:.0f})")
