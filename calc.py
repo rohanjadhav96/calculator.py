@@ -39,26 +39,18 @@ with st.sidebar:
     current_balance = st.number_input(
         "Current Account Balance ($):", 
         value=50000.0, step=100.0,
-        help="Your actual account balance right now (Balance + Open P&L)."
+        help="Your actual Account Balance (Net Liq) right now."
     )
     
     liq_price = st.number_input(
         "Liquidation Price (Hard Stop) ($):", 
         value=48000.0, step=100.0,
-        help="The price level where the account is blown.\n\nCheck your Rithmic/Tradovate dashboard for 'Auto-Liquidate Threshold' or 'Max Drawdown'."
+        help="The EXACT price where your account is blown.\n\nCopy this number from your Rithmic/Tradovate dashboard (look for 'Auto-Liquidate Threshold')."
     )
     
     # Calculate Risk Budget immediately
     risk_budget = max(0.0, current_balance - liq_price)
     
-    # P&L (Only needed for Daily Loss Limit checks)
-    st.caption("--- Optional ---")
-    current_pnl = st.number_input(
-        "Today's P&L (Optional) ($):", 
-        value=0.0, step=50.0,
-        help="Used ONLY if your account has a Daily Loss Limit. (e.g., -500)"
-    )
-
     st.divider()
     use_commissions = st.checkbox(
         "Include Commissions?", 
@@ -91,23 +83,10 @@ with st.expander("📝 Account Rules (Click to Edit)", expanded=False):
         daily_loss = st.number_input("Daily Loss Limit ($)", defaults["daily_loss"], disabled=not is_custom)
 
 # --- 2. RISK BUDGET DISPLAY ---
-# Refine budget if Daily Loss Limit exists
-limiting_factor = "Liquidation Distance"
-
-if daily_loss > 0:
-    # Daily Limit Math: (Start Balance - Daily Limit) vs Current Balance
-    start_balance = current_balance - current_pnl
-    daily_liq_price = start_balance - daily_loss
-    dist_to_daily = current_balance - daily_liq_price
-    
-    if dist_to_daily < risk_budget:
-        risk_budget = max(0.0, dist_to_daily)
-        limiting_factor = "Daily Loss Limit"
-
 st.subheader("🛡️ Trading Power")
 
 if risk_budget <= 0:
-    st.error(f"🚫 **TRADING HALTED:** You have hit your {limiting_factor}.")
+    st.error(f"🚫 **TRADING HALTED:** You have hit your Liquidation Price.")
     st.stop()
 else:
     # Visual Health Bar
@@ -123,7 +102,7 @@ else:
         </div>
         """, unsafe_allow_html=True)
     with col_health2:
-        st.progress(pct_health, text=f"Distance to {limiting_factor}")
+        st.progress(pct_health, text="Distance to Liquidation")
         if risk_budget < 500:
             st.warning(f"⚠️ **Danger Zone:** Only ${risk_budget:.0f} risk remaining!")
 
@@ -167,7 +146,6 @@ st.divider()
 if "Comparison" in view_mode:
     # Auto-Calc
     if "Risk Based" in calc_mode:
-        # Default risk input is usually user's preference, but capped at budget
         rec_risk = min(500.0, float(risk_budget))
         input_risk = st.number_input(
             "Willing to Risk ($):", 50.0, float(risk_budget), rec_risk, 10.0,
