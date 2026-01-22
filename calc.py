@@ -77,48 +77,73 @@ with st.expander("📝 Account Rules (Click to Edit)", expanded=False):
         limit_micro = st.number_input("Max Micros", defaults["max_micros"], disabled=not is_custom)
         daily_loss = st.number_input("Daily Loss Limit ($)", defaults["daily_loss"], disabled=not is_custom)
 
-# --- 2. RISK BUDGET DISPLAY ---
+# --- 2. TRADING POWER (Simplified) ---
 st.subheader("🛡️ Trading Power")
 
 if risk_budget <= 0:
     st.error(f"🚫 TRADING HALTED: You have hit your Liquidation Price.")
     st.stop()
 else:
-    pct_health = min(1.0, risk_budget / defaults["max_dd"])
-    color = "green" if pct_health > 0.5 else "orange" if pct_health > 0.25 else "red"
+    # Color logic for the budget number
+    color = "#00ff00" if risk_budget > 1000 else "#ffaa00" if risk_budget > 500 else "#ff4b4b"
     
-    col_health1, col_health2 = st.columns([1, 3])
-    with col_health1:
-        st.markdown(f"""
-        <div style="text-align:center; padding:10px; border-radius:8px; background-color: #262730; border: 1px solid #555;">
-            <div style='font-size: 24px; font-weight: bold; color: {color};'>${risk_budget:,.2f}</div>
-            <div style='font-size: 12px; color: #aaa;'>Available Risk</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col_health2:
-        st.progress(pct_health, text="Distance to Liquidation")
+    # Simplified Display: No Progress Bar, Just the Number
+    st.markdown(f"""
+    <div style="text-align:center; padding:15px; border-radius:10px; background-color: #262730; border: 1px solid #444; margin-bottom: 20px;">
+        <h2 style='margin:0; color: {color}; font-size: 32px;'>${risk_budget:,.2f}</h2>
+        <p style='margin:0; color: #aaa; font-size: 14px;'>Available Risk Budget</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 3. CALCULATOR UI ---
+
+# Unified Dropdown for easier selection
+instrument_mode = st.selectbox(
+    "Select Instrument / View:",
+    [
+        "Compare: Nasdaq (NQ & MNQ)",
+        "Compare: S&P 500 (ES & MES)",
+        "---",
+        "Single: NQ (Mini)",
+        "Single: MNQ (Micro)",
+        "Single: ES (Mini)",
+        "Single: MES (Micro)"
+    ]
+)
+
+# Parse Selection
+if "Compare: Nasdaq" in instrument_mode:
+    view_mode = "Comparison"
+    data = {"mini":"NQ", "micro":"MNQ", "mini_val":20, "micro_val":2}
+elif "Compare: S&P" in instrument_mode:
+    view_mode = "Comparison"
+    data = {"mini":"ES", "micro":"MES", "mini_val":50, "micro_val":5}
+elif "---" in instrument_mode:
+    st.warning("Please select an instrument.")
+    st.stop()
+else:
+    # Single Mode
+    view_mode = "Single"
+    # Extract name from string (e.g., "Single: NQ (Mini)" -> "NQ")
+    if "NQ" in instrument_mode:
+        data = {"name": "NQ", "val": 20, "type": "mini"}
+    elif "MNQ" in instrument_mode:
+        data = {"name": "MNQ", "val": 2, "type": "micro"}
+    elif "ES" in instrument_mode:
+        data = {"name": "ES", "val": 50, "type": "mini"}
+    elif "MES" in instrument_mode:
+        data = {"name": "MES", "val": 5, "type": "micro"}
 
 st.divider()
 
-# --- 3. CALCULATOR UI ---
-c1, c2, c3 = st.columns([1,1,2])
+# Inputs
+c1, c2, c3 = st.columns([1, 1, 1])
 with c1:
-    view_mode = st.radio("View Mode:", ["Comparison (Mini vs Micro)", "Single Instrument"])
-with c2:
     calc_mode = st.radio("Calculation Mode:", ["Risk Based ($)", "Manual Qty"])
+with c2:
+    sl_pts = st.number_input("Stop Loss (Points):", 1.0, 500.0, 10.0, 0.5)
 with c3:
-    if "Comparison" in view_mode:
-        asset_group = st.selectbox("Asset Group:", ["Nasdaq (NQ & MNQ)", "S&P 500 (ES & MES)"])
-        data = {"mini":"NQ", "micro":"MNQ", "mini_val":20, "micro_val":2} if "Nasdaq" in asset_group else {"mini":"ES", "micro":"MES", "mini_val":50, "micro_val":5}
-    else:
-        single_asset = st.selectbox("Instrument:", ["NQ", "MNQ", "ES", "MES"])
-        map_ = {"NQ":20, "MNQ":2, "ES":50, "MES":5}
-        type_ = "mini" if single_asset in ["NQ", "ES"] else "micro"
-        data = {"name":single_asset, "val":map_[single_asset], "type":type_}
-
-c_sl, c_tp = st.columns(2)
-sl_pts = c_sl.number_input("Stop Loss (Pts):", 1.0, 500.0, 10.0, 0.5)
-tp_pts = c_tp.number_input("Take Profit (Pts):", 1.0, 1000.0, 20.0, 0.5)
+    tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
 
 # --- 4. CALCULATION ENGINE ---
 def calculate_stats(qty, point_val, is_micro):
@@ -132,17 +157,17 @@ def calculate_stats(qty, point_val, is_micro):
     }
 
 def get_rejection_reason(sl, val, user_risk, account_budget):
-    """Diagnose why the trade quantity is zero"""
+    """Diagnose why the trade quantity is zero (Plain Text)"""
     one_contract_risk = sl * val
     
     if one_contract_risk > account_budget:
-        return f"Insufficient Funds. 1 Contract Risks ${one_contract_risk:,.2f} but you only have ${account_budget:,.2f} available."
+        return f"Insufficient Funds: 1 contract risks ${one_contract_risk:,.2f} but you only have ${account_budget:,.2f} available."
     elif one_contract_risk > user_risk:
-        return f"Exceeds User Risk Limit. 1 Contract Risks ${one_contract_risk:,.2f} but you set your limit to ${user_risk:,.2f}."
+        return f"Exceeds User Risk Limit: 1 contract risks ${one_contract_risk:,.2f} but you only wanted to risk ${user_risk:,.2f}."
     else:
         return "Quantity is 0. Increase risk amount or decrease Stop Loss."
 
-# --- 5. THE WARNING SYSTEM (Rule Guardian) ---
+# --- 5. RULE GUARDIAN (Plain Text) ---
 def check_violations(stats, limit_qty, type_name):
     violations = []
     if not stats: return []
@@ -170,7 +195,7 @@ def check_violations(stats, limit_qty, type_name):
 # --- 6. RENDER RESULTS ---
 st.divider()
 
-if "Comparison" in view_mode:
+if view_mode == "Comparison":
     # Auto-Calc Logic
     if "Risk Based" in calc_mode:
         rec_risk = min(500.0, float(risk_budget))
@@ -205,7 +230,6 @@ if "Comparison" in view_mode:
             st.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
             st.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
         else:
-            # SIMPLE DIAGNOSTIC MESSAGE
             reason = get_rejection_reason(sl_pts, data["mini_val"], user_risk_input, risk_budget)
             st.warning(reason)
             
@@ -221,7 +245,6 @@ if "Comparison" in view_mode:
             st.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
             st.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
         else:
-            # SIMPLE DIAGNOSTIC MESSAGE
             reason = get_rejection_reason(sl_pts, data["micro_val"], user_risk_input, risk_budget)
             st.warning(reason)
 
@@ -238,18 +261,23 @@ else:
 
     stats = calculate_stats(qty, data["val"], data["type"] == "micro")
     
+    st.subheader(f"📊 {data['name']} Analysis")
+    
     if stats:
         warnings = check_violations(stats, limit, "Single")
-        st.subheader(f"📊 {data['name']} Analysis")
+        
         if warnings:
             for w in warnings: st.error(w)
         else:
             st.success("✅ Trade Rules Passed")
+            
         m1, m2, m3 = st.columns(3)
         m1.metric("Net Risk", f"-${stats['net_risk']:,.2f}")
         m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
         m3.metric("R:R", f"1 : {tp_pts/sl_pts:.1f}")
+        
+        st.info(f"Size: {stats['qty']} Contracts")
+        
     else:
-        st.subheader(f"📊 {data['name']} Analysis")
         reason = get_rejection_reason(sl_pts, data["val"], user_risk_input, risk_budget)
         st.warning(reason)
