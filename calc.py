@@ -2,21 +2,9 @@ import streamlit as st
 import math
 
 # --- Page Config ---
-st.set_page_config(page_title="Dual Prop Calculator", page_icon="⚖️")
+st.set_page_config(page_title="Prop Risk Manager", page_icon="🎯", layout="centered")
 
 # --- Constants & Settings ---
-# Asset Groups (Mini & Micro paired)
-ASSET_GROUPS = {
-    "Nasdaq (NQ & MNQ)": {
-        "mini_name": "NQ", "mini_val": 20.0,
-        "micro_name": "MNQ", "micro_val": 2.0
-    },
-    "S&P 500 (ES & MES)": {
-        "mini_name": "ES", "mini_val": 50.0,
-        "micro_name": "MES", "micro_val": 5.0
-    }
-}
-
 # Account Presets
 PRESETS = {
     "Lucid Flex 50k": {
@@ -33,10 +21,10 @@ PRESETS = {
     }
 }
 
-st.title("⚖️ NQ/MNQ & ES/MES Comparator")
+st.title("🎯 Prop Risk Manager")
 
 # --- 1. Account Configuration ---
-with st.expander("⚙️ Account Rules & Settings", expanded=False):
+with st.expander("⚙️ Account Rules", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
         account_choice = st.selectbox("Select Account:", list(PRESETS.keys()))
@@ -66,11 +54,34 @@ st.divider()
 c_mode, c_asset = st.columns([1, 1])
 with c_mode:
     calc_mode = st.radio("Mode:", ["🛡️ Calculate Quantity (Risk Based)", "💰 Calculate P&L (Manual Qty)"])
-with c_asset:
-    selected_group = st.selectbox("Asset Class:", list(ASSET_GROUPS.keys()))
 
-# Get Asset Details
-asset = ASSET_GROUPS[selected_group]
+# Define Asset Options structure
+ASSET_OPTIONS = {
+    "comparisons": {
+        "Nasdaq (NQ & MNQ)": {"mini": "NQ", "micro": "MNQ", "mini_val": 20, "micro_val": 2},
+        "S&P 500 (ES & MES)": {"mini": "ES", "micro": "MES", "mini_val": 50, "micro_val": 5}
+    },
+    "singles": {
+        "Only NQ (Mini)": {"name": "NQ", "val": 20, "type": "mini"},
+        "Only MNQ (Micro)": {"name": "MNQ", "val": 2, "type": "micro"},
+        "Only ES (Mini)": {"name": "ES", "val": 50, "type": "mini"},
+        "Only MES (Micro)": {"name": "MES", "val": 5, "type": "micro"}
+    }
+}
+
+# Create a flattened list for the dropdown
+dropdown_options = list(ASSET_OPTIONS["comparisons"].keys()) + ["---"] + list(ASSET_OPTIONS["singles"].keys())
+
+with c_asset:
+    selected_option = st.selectbox("Instrument View:", dropdown_options)
+
+# Handle Separator Selection
+if selected_option == "---":
+    st.warning("Please select a valid instrument.")
+    st.stop()
+
+# Determine if it's a Comparison or Single View
+is_comparison = selected_option in ASSET_OPTIONS["comparisons"]
 
 # Points Input
 c_sl, c_tp = st.columns(2)
@@ -79,95 +90,100 @@ with c_sl:
 with c_tp:
     tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
 
-# Initialize Variables
-mini_qty, micro_qty = 0, 0
 
-# --- CALCULATION LOGIC ---
-
-if "Risk Based" in calc_mode:
-    # Input Risk
-    risk_usd = st.number_input("Max Risk Amount ($):", value=500.0, step=10.0)
-    
-    # Calc Mini
-    mini_risk_per_con = sl_pts * asset["mini_val"]
-    mini_qty = math.floor(risk_usd / mini_risk_per_con)
-    # Cap Mini
-    if mini_qty > limit_mini: mini_qty = limit_mini
-    
-    # Calc Micro
-    micro_risk_per_con = sl_pts * asset["micro_val"]
-    micro_qty = math.floor(risk_usd / micro_risk_per_con)
-    # Cap Micro
-    if micro_qty > limit_micro: micro_qty = limit_micro
-
-else:
-    # Manual Input
-    c_qty_mini, c_qty_micro = st.columns(2)
-    with c_qty_mini:
-        mini_qty = st.number_input(f"Qty {asset['mini_name']}:", min_value=0, value=1)
-    with c_qty_micro:
-        micro_qty = st.number_input(f"Qty {asset['micro_name']}:", min_value=0, value=0)
-
-
-# --- 3. DISPLAY RESULTS (Side by Side) ---
+# --- LOGIC & RENDERING ---
 st.divider()
-st.subheader("📊 Trade Options Comparison")
 
-col_mini, col_micro = st.columns(2)
+# HELPER: Display Single Card
+def render_card(title, qty, risk, reward, limit_warning=False, blow_warning=False):
+    if qty == 0:
+        st.error(f"❌ Stop too wide for **{title}**")
+        return
 
-# --- LEFT COLUMN: MINI (NQ/ES) ---
-with col_mini:
-    st.markdown(f"### 🦁 {asset['mini_name']} (Mini)")
-    if mini_qty == 0:
-        st.error("Stop Loss too wide for risk amount.")
-    else:
-        # Mini Math
-        risk_mini = mini_qty * sl_pts * asset["mini_val"]
-        reward_mini = mini_qty * tp_pts * asset["mini_val"]
-        
-        st.info(f"**Qty: {mini_qty} Contracts**")
-        st.metric("Risk (Loss)", f"-${risk_mini:,.2f}")
-        st.metric("Reward (Profit)", f"+${reward_mini:,.2f}")
-        
-        # Rule Checks
-        if daily_loss > 0 and risk_mini > daily_loss:
-            st.warning(f"⚠️ Exceeds Daily Loss (${daily_loss})")
-        if risk_mini > max_dd:
-            st.error(f"💀 BLOWS ACCOUNT (DD: {max_dd})")
-
-# --- RIGHT COLUMN: MICRO (MNQ/MES) ---
-with col_micro:
-    st.markdown(f"### 🐭 {asset['micro_name']} (Micro)")
-    if micro_qty == 0:
-        st.error("Stop Loss too wide.")
-    else:
-        # Micro Math
-        risk_micro = micro_qty * sl_pts * asset["micro_val"]
-        reward_micro = micro_qty * tp_pts * asset["micro_val"]
-        
-        st.success(f"**Qty: {micro_qty} Contracts**")
-        st.metric("Risk (Loss)", f"-${risk_micro:,.2f}")
-        st.metric("Reward (Profit)", f"+${reward_micro:,.2f}")
-        
-        # Micro Benefit Calculation
-        st.caption(f"💡 **Granularity:** You can trim this position in {micro_qty} parts.")
-
-# --- 4. CONSISTENCY CHECK (Global) ---
-if stage == "Evaluation" and consistency_pct > 0:
-    st.divider()
-    max_day = profit_target * consistency_pct
-    st.write(f"**Consistency Limit:** ${max_day:,.0f}")
+    st.subheader(f"{title}")
+    st.info(f"**Qty: {qty} Contracts**")
     
-    # Check if Mini violates
-    if mini_qty > 0:
-        mini_reward = mini_qty * tp_pts * asset["mini_val"]
-        if mini_reward > max_day:
-            st.warning(f"⚠️ **{asset['mini_name']} Warning:** Hitting TP (${mini_reward:,.0f}) will exceed your daily consistency limit.")
+    col_a, col_b = st.columns(2)
+    col_a.metric("Risk", f"-${risk:,.2f}")
+    col_b.metric("Profit", f"+${reward:,.2f}")
+
+    if limit_warning:
+        st.warning(f"⚠️ Quantity capped at account limit.")
+    if blow_warning:
+        st.error(f"💀 **BLOWS ACCOUNT** (Risk > {max_dd})")
+    elif daily_loss > 0 and risk > daily_loss:
+        st.error(f"❌ **Exceeds Daily Loss** (${daily_loss})")
+
+    # Consistency Check
+    if stage == "Evaluation" and consistency_pct > 0:
+        max_day = profit_target * consistency_pct
+        if reward > max_day:
+            st.warning(f"⚠️ **Consistency Risk:** Profit > ${max_day:,.0f}")
         else:
-            st.caption(f"✅ {asset['mini_name']} TP is safe.")
-            
-    # Check if Micro violates
-    if micro_qty > 0:
-        micro_reward = micro_qty * tp_pts * asset["micro_val"]
-        if micro_reward > max_day:
-            st.warning(f"⚠️ **{asset['micro_name']} Warning:** Hitting TP (${micro_reward:,.0f}) will exceed your daily consistency limit.")
+            st.caption(f"✅ Safe for consistency (<${max_day:,.0f})")
+
+
+# ==========================================
+# SCENARIO A: SIDE-BY-SIDE COMPARISON
+# ==========================================
+if is_comparison:
+    data = ASSET_OPTIONS["comparisons"][selected_option]
+    
+    # Calculate Qty
+    if "Risk Based" in calc_mode:
+        risk_usd = st.number_input("Max Risk Amount ($):", value=500.0, step=10.0)
+        
+        q_mini = math.floor(risk_usd / (sl_pts * data["mini_val"]))
+        q_mini = min(q_mini, limit_mini) # Cap limit
+        
+        q_micro = math.floor(risk_usd / (sl_pts * data["micro_val"]))
+        q_micro = min(q_micro, limit_micro) # Cap limit
+    else:
+        c_q1, c_q2 = st.columns(2)
+        q_mini = c_q1.number_input(f"Qty {data['mini']}", min_value=0, value=1)
+        q_micro = c_q2.number_input(f"Qty {data['micro']}", min_value=0, value=0)
+
+    # Render Side by Side
+    st.subheader("📊 Comparison")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        risk_m = q_mini * sl_pts * data["mini_val"]
+        reward_m = q_mini * tp_pts * data["mini_val"]
+        render_card(f"🦁 {data['mini']}", q_mini, risk_m, reward_m, q_mini==limit_mini, risk_m > max_dd)
+
+    with col2:
+        risk_mi = q_micro * sl_pts * data["micro_val"]
+        reward_mi = q_micro * tp_pts * data["micro_val"]
+        render_card(f"🐭 {data['micro']}", q_micro, risk_mi, reward_mi, q_micro==limit_micro, risk_mi > max_dd)
+
+
+# ==========================================
+# SCENARIO B: SINGLE INSTRUMENT VIEW
+# ==========================================
+else:
+    data = ASSET_OPTIONS["singles"][selected_option]
+    limit = limit_mini if data["type"] == "mini" else limit_micro
+
+    # Calculate Qty
+    if "Risk Based" in calc_mode:
+        risk_usd = st.number_input("Max Risk Amount ($):", value=500.0, step=10.0)
+        qty = math.floor(risk_usd / (sl_pts * data["val"]))
+        
+        capped = False
+        if qty > limit:
+            qty = limit
+            capped = True
+    else:
+        qty = st.number_input("Quantity:", min_value=1, value=1)
+        if qty > limit:
+            st.error(f"🚫 Limit is {limit} contracts.")
+            st.stop()
+        capped = False
+
+    # Render Single Centered Card
+    risk_val = qty * sl_pts * data["val"]
+    reward_val = qty * tp_pts * data["val"]
+    
+    st.markdown("---")
+    render_card(f"💎 {data['name']}", qty, risk_val, reward_val, capped, risk_val > max_dd)
