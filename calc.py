@@ -35,95 +35,106 @@ st.title("🚀 Prop Command Center")
 with st.sidebar:
     st.header("🔴 Live Session Data")
     
-    current_pnl = st.number_input(
-        "Current Daily P&L ($):", 
-        value=0.0, step=50.0,
-        help="Enter your Realized P&L for today. \n\nIf you are down -$500, the calculator will reduce your risk budget to prevent blowing the account."
+    # Account Balance Inputs
+    current_balance = st.number_input(
+        "Current Account Balance ($):", 
+        value=50000.0, step=100.0,
+        help="Your actual account balance right now (Balance + Open P&L)."
     )
     
-    st.divider()
+    liq_price = st.number_input(
+        "Liquidation Price (Hard Stop) ($):", 
+        value=48000.0, step=100.0,
+        help="The price level where the account is blown.\n\nCheck your Rithmic/Tradovate dashboard for 'Auto-Liquidate Threshold' or 'Max Drawdown'."
+    )
     
+    # Calculate Risk Budget immediately
+    risk_budget = max(0.0, current_balance - liq_price)
+    
+    # P&L (Only needed for Daily Loss Limit checks)
+    st.caption("--- Optional ---")
+    current_pnl = st.number_input(
+        "Today's P&L (Optional) ($):", 
+        value=0.0, step=50.0,
+        help="Used ONLY if your account has a Daily Loss Limit. (e.g., -500)"
+    )
+
+    st.divider()
     use_commissions = st.checkbox(
         "Include Commissions?", 
         value=True,
-        help="If checked, subtracts estimated commissions from profits and adds them to losses.\n\n(~ $4.00 for Minis, ~$0.88 for Micros)"
+        help="Subtracts ~$4.00 (Mini) or ~$0.88 (Micro) per contract from P&L."
     )
     
     st.divider()
     st.caption("⚙️ Configuration")
-    
-    account_choice = st.selectbox(
-        "Account Preset:", 
-        list(PRESETS.keys()),
-        help="Select your Prop Firm account type to auto-load rules (Drawdown, Limits, etc.)."
-    )
-    
-    stage = st.selectbox(
-        "Stage:", 
-        ["Evaluation", "Funded"],
-        help="Evaluation often has Consistency Rules. Funded accounts usually remove them but keep Drawdown limits."
-    )
+    account_choice = st.selectbox("Account Preset:", list(PRESETS.keys()))
+    stage = st.selectbox("Stage:", ["Evaluation", "Funded"])
 
 # Load Rules
 defaults = PRESETS[account_choice]
 is_custom = (account_choice == "🛠️ Custom / Other")
 
-# --- 1. RULES EXPANDER (With Tooltips) ---
-with st.expander("📝 Account Rules (Click to Edit Custom)", expanded=False):
+# --- 1. RULES EXPANDER ---
+with st.expander("📝 Account Rules (Click to Edit)", expanded=False):
     st.caption(defaults.get("desc", ""))
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        acc_size = st.number_input("Account Size ($)", value=defaults["size"], disabled=not is_custom, help="Total starting balance of the account.")
-        max_dd = st.number_input("Max Drawdown ($)", value=defaults["max_dd"], disabled=not is_custom, help="The maximum loss allowed from the high-water mark (EOD Trailing) or starting balance.")
-    with col2:
-        profit_target = st.number_input("Profit Target ($)", value=defaults["target"], disabled=not is_custom, help="The dollar amount needed to pass the evaluation.")
-        consistency_pct = st.number_input("Consistency %", value=defaults["consistency"], step=0.1, disabled=not is_custom, help="Rule: No single day's profit can exceed this % of the total Profit Target.\n\n(e.g., 50% of $3000 target = Max $1500/day).")
-    with col3:
-        limit_mini = st.number_input("Max Minis", value=defaults["max_minis"], disabled=not is_custom, help="Hard limit on how many Mini contracts (NQ, ES) you can hold at once.")
-        limit_micro = st.number_input("Max Micros", value=defaults["max_micros"], disabled=not is_custom, help="Hard limit on how many Micro contracts (MNQ, MES) you can hold at once.")
-        daily_loss = st.number_input("Daily Loss Limit ($)", value=defaults["daily_loss"], disabled=not is_custom, help="The maximum amount you are allowed to lose in a single trading day before the account is breached.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        acc_size = st.number_input("Account Size", defaults["size"], disabled=not is_custom)
+        max_dd = st.number_input("Max Drawdown", defaults["max_dd"], disabled=not is_custom)
+    with c2:
+        profit_target = st.number_input("Profit Target", defaults["target"], disabled=not is_custom)
+        consistency_pct = st.number_input("Consistency %", defaults["consistency"], disabled=not is_custom)
+    with c3:
+        limit_mini = st.number_input("Max Minis", defaults["max_minis"], disabled=not is_custom)
+        limit_micro = st.number_input("Max Micros", defaults["max_micros"], disabled=not is_custom)
+        daily_loss = st.number_input("Daily Loss Limit ($)", defaults["daily_loss"], disabled=not is_custom)
 
-# --- 2. RISK HEALTH BAR ---
-# Logic: Calculate remaining budget
-risk_budget = defaults["max_dd"] + current_pnl 
-reason = "Max Drawdown"
+# --- 2. RISK BUDGET DISPLAY ---
+# Refine budget if Daily Loss Limit exists
+limiting_factor = "Liquidation Distance"
 
 if daily_loss > 0:
-    daily_budget = daily_loss + current_pnl 
-    if daily_budget < risk_budget:
-        risk_budget = daily_budget
-        reason = "Daily Loss Limit"
+    # Daily Limit Math: (Start Balance - Daily Limit) vs Current Balance
+    start_balance = current_balance - current_pnl
+    daily_liq_price = start_balance - daily_loss
+    dist_to_daily = current_balance - daily_liq_price
+    
+    if dist_to_daily < risk_budget:
+        risk_budget = max(0.0, dist_to_daily)
+        limiting_factor = "Daily Loss Limit"
 
-st.subheader("🛡️ Available Risk Budget")
+st.subheader("🛡️ Trading Power")
+
 if risk_budget <= 0:
-    st.error(f"🚫 **TRADING HALTED:** You have hit your {reason}.")
+    st.error(f"🚫 **TRADING HALTED:** You have hit your {limiting_factor}.")
     st.stop()
 else:
-    color = "green" if risk_budget > 1000 else "orange" if risk_budget > 500 else "red"
-    st.markdown(f"""
-    <div style="padding:15px; border-radius:10px; border: 1px solid #444; background-color: #262730;">
-        <h3 style='margin:0; color:{color}'>${risk_budget:,.2f}</h3>
-        <small style='color:#bbb'>Remaining buffer before hitting <b>{reason}</b>.</small>
-    </div>
-    """, unsafe_allow_html=True)
+    # Visual Health Bar
+    pct_health = min(1.0, risk_budget / defaults["max_dd"])
+    color = "green" if pct_health > 0.5 else "orange" if pct_health > 0.25 else "red"
+    
+    col_health1, col_health2 = st.columns([1, 3])
+    with col_health1:
+        st.markdown(f"""
+        <div style="text-align:center; padding:10px; border-radius:8px; background-color: #262730; border: 1px solid #555;">
+            <div style='font-size: 24px; font-weight: bold; color: {color};'>${risk_budget:,.2f}</div>
+            <div style='font-size: 12px; color: #aaa;'>Available Risk</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_health2:
+        st.progress(pct_health, text=f"Distance to {limiting_factor}")
+        if risk_budget < 500:
+            st.warning(f"⚠️ **Danger Zone:** Only ${risk_budget:.0f} risk remaining!")
 
 st.divider()
 
-# --- 3. CALCULATOR INPUTS ---
+# --- 3. CALCULATOR UI ---
 c1, c2, c3 = st.columns([1,1,2])
 with c1:
-    view_mode = st.radio(
-        "View Mode:", 
-        ["Comparison (Mini vs Micro)", "Single Instrument"],
-        help="Select 'Comparison' to see NQ and MNQ side-by-side. Select 'Single' for a focused view."
-    )
+    view_mode = st.radio("View Mode:", ["Comparison (Mini vs Micro)", "Single Instrument"])
 with c2:
-    calc_mode = st.radio(
-        "Calculation Mode:", 
-        ["Risk Based ($)", "Manual Qty"],
-        help="'Risk Based': You enter $ Risk, we calculate Quantity.\n'Manual Qty': You enter Quantity, we calculate $ Risk."
-    )
+    calc_mode = st.radio("Calculation Mode:", ["Risk Based ($)", "Manual Qty"])
 with c3:
     if "Comparison" in view_mode:
         asset_group = st.selectbox("Asset Group:", ["Nasdaq (NQ & MNQ)", "S&P 500 (ES & MES)"])
@@ -134,16 +145,10 @@ with c3:
         type_ = "mini" if single_asset in ["NQ", "ES"] else "micro"
         data = {"name":single_asset, "val":map_[single_asset], "type":type_}
 
-# Points Inputs with Tooltips
+# Points
 c_sl, c_tp = st.columns(2)
-sl_pts = c_sl.number_input(
-    "Stop Loss (Points):", 1.0, 500.0, 10.0, 0.5,
-    help="The distance in points from your entry where you will exit the trade if it goes against you."
-)
-tp_pts = c_tp.number_input(
-    "Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5,
-    help="The distance in points from your entry where you will exit the trade for a profit."
-)
+sl_pts = c_sl.number_input("Stop Loss (Pts):", 1.0, 500.0, 10.0, 0.5, help="Points of risk.")
+tp_pts = c_tp.number_input("Take Profit (Pts):", 1.0, 1000.0, 20.0, 0.5, help="Target points.")
 
 # --- ENGINE ---
 def calculate_stats(qty, point_val, is_micro):
@@ -156,17 +161,19 @@ def calculate_stats(qty, point_val, is_micro):
         "net_reward": gross_reward - comm, "comm": comm, "gross": gross_reward
     }
 
-# --- RENDER RESULTS ---
+# --- RESULTS ---
 st.divider()
 
 if "Comparison" in view_mode:
-    # Auto-Calc Quantity logic
+    # Auto-Calc
     if "Risk Based" in calc_mode:
+        # Default risk input is usually user's preference, but capped at budget
+        rec_risk = min(500.0, float(risk_budget))
         input_risk = st.number_input(
-            "Max Risk allowed for this trade ($):", 
-            50.0, float(risk_budget), min(500.0, float(risk_budget)), 10.0,
-            help=f"How much are you willing to lose on this specific trade? (Max allowed: ${risk_budget})"
+            "Willing to Risk ($):", 50.0, float(risk_budget), rec_risk, 10.0,
+            help=f"Enter amount to risk. Cannot exceed available budget (${risk_budget:.0f})."
         )
+        
         q_mini = min(math.floor(input_risk / (sl_pts * data["mini_val"])), defaults["max_minis"])
         q_micro = min(math.floor(input_risk / (sl_pts * data["micro_val"])), defaults["max_micros"])
     else:
@@ -174,7 +181,7 @@ if "Comparison" in view_mode:
         q_mini = col_q1.number_input(f"Qty {data['mini']}", 0, defaults["max_minis"], 1)
         q_micro = col_q2.number_input(f"Qty {data['micro']}", 0, defaults["max_micros"], 1)
 
-    # Render Side-by-Side
+    # Render
     stats_mini = calculate_stats(q_mini, data["mini_val"], False)
     stats_micro = calculate_stats(q_micro, data["micro_val"], True)
     
@@ -182,37 +189,36 @@ if "Comparison" in view_mode:
     with col_a:
         st.subheader(f"🦁 {data['mini']} (Mini)")
         if stats_mini:
-            st.info(f"Size: **{stats_mini['qty']} Contracts**")
+            st.info(f"Size: **{stats_mini['qty']}**")
+            # Highlight Risk if it's close to budget
+            risk_color = "red" if stats_mini['net_risk'] > (risk_budget * 0.9) else "normal"
             st.metric("Net Risk", f"-${stats_mini['net_risk']:,.2f}")
             st.metric("Net Profit", f"+${stats_mini['net_reward']:,.2f}")
         else:
-            st.warning("Stop Loss too wide (Risk > Limit).")
+            st.warning("Size 0 (Risk > Budget?)")
             
     with col_b:
         st.subheader(f"🐭 {data['micro']} (Micro)")
         if stats_micro:
-            st.info(f"Size: **{stats_micro['qty']} Contracts**")
+            st.info(f"Size: **{stats_micro['qty']}**")
             st.metric("Net Risk", f"-${stats_micro['net_risk']:,.2f}")
             st.metric("Net Profit", f"+${stats_micro['net_reward']:,.2f}")
         else:
-            st.warning("Stop Loss too wide.")
+            st.warning("Size 0")
 
 else:
     # Single View Logic
     limit = defaults["max_minis"] if data["type"] == "mini" else defaults["max_micros"]
     if "Risk Based" in calc_mode:
-        input_risk = st.number_input(
-            "Max Risk allowed for this trade ($):", 
-            50.0, float(risk_budget), min(500.0, float(risk_budget)), 10.0,
-            help=f"How much are you willing to lose? (Capped at budget: ${risk_budget})"
-        )
+        rec_risk = min(500.0, float(risk_budget))
+        input_risk = st.number_input("Willing to Risk ($):", 50.0, float(risk_budget), rec_risk, 10.0)
         qty = min(math.floor(input_risk / (sl_pts * data["val"])), limit)
     else:
         qty = st.number_input("Quantity:", 1, limit, 1)
 
     stats = calculate_stats(qty, data["val"], data["type"] == "micro")
     if stats:
-        st.subheader(f"📊 {data['name']} Trade Analysis")
+        st.subheader(f"📊 {data['name']} Analysis")
         m1, m2, m3 = st.columns(3)
         m1.metric("Net Risk", f"-${stats['net_risk']:,.2f}")
         m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
@@ -222,6 +228,6 @@ else:
         if stage == "Evaluation" and defaults["consistency"] > 0:
             limit_val = defaults["target"] * defaults["consistency"]
             if stats["gross"] > limit_val:
-                st.warning(f"⚠️ **Consistency Warning:** Profit (${stats['gross']:.0f}) exceeds daily limit (${limit_val:.0f}).")
+                st.warning(f"⚠️ **Consistency Warning:** Profit > ${limit_val:.0f}")
             else:
-                st.success(f"✅ Safe for consistency (Limit: ${limit_val:.0f})")
+                st.success(f"✅ Safe (Profit < ${limit_val:.0f})")
