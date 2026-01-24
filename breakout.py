@@ -96,8 +96,9 @@ with st.sidebar:
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
     
     st.header("4. Hedge Ratios")
-    ratio_p1 = st.number_input("Phase 1 Ratio", 5.8, step=0.1)
-    ratio_p2 = st.number_input("Phase 2 Ratio", 3.2, step=0.1)
+    # UPDATED: Unlocked Ratios (Min 0.01, Max 100.0)
+    ratio_p1 = st.number_input("Phase 1 Ratio", min_value=0.01, max_value=100.0, value=5.8, step=0.1, format="%.2f")
+    ratio_p2 = st.number_input("Phase 2 Ratio", min_value=0.01, max_value=100.0, value=3.2, step=0.1, format="%.2f")
     
     st.markdown("---")
     st.header("5. Commissions")
