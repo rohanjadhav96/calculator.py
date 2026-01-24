@@ -8,8 +8,8 @@ st.set_page_config(page_title="Breakout Hedge Commander", layout="wide", page_ic
 # --- SESSION STATE ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
 if 'phase2_status' not in st.session_state: st.session_state.phase2_status = "Pending"
-if 'risk_preset' not in st.session_state: st.session_state.risk_preset = 4.0
-if 'days_preset' not in st.session_state: st.session_state.days_preset = 2
+if 'risk_preset' not in st.session_state: st.session_state.risk_preset = 4.8
+if 'days_preset' not in st.session_state: st.session_state.days_preset = 0
 
 # --- STYLING ---
 st.markdown("""
@@ -37,30 +37,25 @@ st.markdown("""
     
     /* Info/Warning Boxes */
     .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
-    .warning-box { background-color: #2e0b0b; padding: 10px; border-left: 3px solid #FF4B4B; font-size: 0.9em; color: #ffcccc; margin-bottom: 15px; }
+    .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander")
-st.caption("Trailing Drawdown Edition: Optimized for Single-Trade Execution")
+st.title("🛡️ Breakout Hedge Commander v24")
+st.caption("Updated: One-Shot Pass + Full 8% Drain Capability")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("1. Strategy Presets")
     st.markdown("""
     <div class='info-box'>
-    <b>Preset Guide:</b><br>
-    • <b>SAFE (2-Day):</b> Risk 4.0%. Allows room for error. <br>
-    • <b>ONE-SHOT (Speed):</b> Risk 4.8%. Max aggression.
+    <b>Strategy: One-Shot</b><br>
+    We risk ~4.8% to pass in 1 trade.<br>
+    If we fail, we drain the FULL 8% to maximize refund.
     </div>
     """, unsafe_allow_html=True)
     
-    c1, c2 = st.columns(2)
-    if c1.button("🛡️ SAFE"):
-        st.session_state.risk_preset = 4.0
-        st.session_state.days_preset = 2
-        st.rerun()
-    if c2.button("⚡ ONE-SHOT"):
+    if st.button("⚡ RESET TO ONE-SHOT DEFAULTS"):
         st.session_state.risk_preset = 4.8
         st.session_state.days_preset = 0 
         st.rerun()
@@ -71,45 +66,32 @@ with st.sidebar:
     fee = st.number_input("Signup Fee ($)", 450)
     
     st.header("3. Risk Management")
-    st.markdown("<div class='info-box'><b>Note:</b> Due to Trailing Drawdown, you must aim to Pass in <b>1 Trade</b> to avoid the drawdown line moving up.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='success-box'><b>Note:</b> Since Trailing Drawdown is static while open, we can safely target +5% in one trade.</div>", unsafe_allow_html=True)
     
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
-    
-    if risk_per_trade_pct < 0.04:
-        st.warning("⚠️ Risk < 4% makes passing in 1-Shot difficult.")
     
     st.header("4. Hedge Ratios")
     ratio_p1 = st.number_input("Phase 1 Ratio", 5.8, step=0.1)
     ratio_p2 = st.number_input("Phase 2 Ratio", 3.2, step=0.1)
     
     st.markdown("---")
-    st.header("5. Commissions (Friction)")
-    
-    # SPLIT COMMISSIONS
-    prop_comm_rate = st.number_input("Prop Commission (%)", 0.04, format="%.4f", help="Breakout Standard Fee") / 100
-    
+    st.header("5. Commissions")
+    prop_comm_rate = st.number_input("Prop Commission (%)", 0.04, format="%.4f") / 100
     zero_cex_fees = st.checkbox("🔥 Use Zero-Fee CEX?", value=True)
     
     if zero_cex_fees:
         cex_comm_rate = 0.0
-        st.caption("CEX Fee: 0.00%")
     else:
         cex_comm_rate = st.number_input("CEX Commission (%)", 0.04, format="%.4f") / 100
     
-    # SWAPS (Hidden for One-Shot/Intraday, Visible if holding)
-    include_swap = st.checkbox("Include Swap Fees?", value=(st.session_state.days_preset > 0))
+    include_swap = st.checkbox("Include Swap Fees?", value=False)
     swap_rate = 0.0
     days_held = 0.0
     if include_swap:
         swap_rate = st.number_input("Swap Rate (%)", 0.03, format="%.4f") / 100
-        days_held = st.number_input("Avg Days Held", value=st.session_state.days_preset)
-
-    st.markdown("---")
-    if st.button("🔄 FULL RESET"):
-        st.session_state.clear()
-        st.rerun()
+        days_held = st.number_input("Avg Days Held", value=1)
 
 # --- ENGINE ---
 def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.0):
@@ -122,27 +104,33 @@ def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.
     else:
         cex_size = prop_size / ratio_val
 
-    # FRICTION (Split Commission)
+    # FRICTION
     prop_fric = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
     cex_fric = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
-    # PASS LOGIC (One Shot)
+    # PASS LOGIC (Cost to hit target)
     prop_gross = target_profit + prop_fric
     if is_funded:
         cex_loss_pass = (prop_gross * funded_ratio) + cex_fric
     else:
         cex_loss_pass = (prop_gross / ratio_val) + cex_fric
 
-    # FAIL LOGIC (One Shot Fail)
-    # We assume we hit SL on the big trade (Risk Amount), not Full Drain
-    prop_loss = risk_usd
+    # FAIL LOGIC (Full 8% Drain)
+    # Even if we only risk 4.8% on the main trade, if we fail, we assume
+    # we drain the remaining balance to extract max value from CEX.
+    total_drain = acct_size * max_dd_pct
+    
+    # We need to estimate friction for draining the WHOLE account.
+    # Friction scales with size.
+    # Drain Multiplier = 8% / Risk% (e.g. 1.6 trades worth of volume)
+    volume_multiplier = max_dd_pct / risk_per_trade_pct
     
     if is_funded:
-        cex_win_gross = prop_loss * funded_ratio
+        cex_win_gross = total_drain * funded_ratio
     else:
-        cex_win_gross = prop_loss / ratio_val
+        cex_win_gross = total_drain / ratio_val
         
-    cex_win_net = cex_win_gross - cex_fric
+    cex_win_net = cex_win_gross - (cex_fric * volume_multiplier)
 
     return {"pass_cost": cex_loss_pass, "fail_refund": cex_win_net, "prop_size": prop_size, "cex_size": cex_size}
 
@@ -162,19 +150,11 @@ with t1:
         c1, c2, c3 = st.columns(3)
         c1.metric("Prop Size", f"${p1['prop_size']:,.0f}")
         c2.metric("CEX Size", f"${p1['cex_size']:,.0f}")
-        c3.metric("Daily Limit", f"${acct_size*daily_dd_pct:,.0f}")
+        c3.metric("One-Shot Risk", f"${acct_size*risk_per_trade_pct:,.0f}")
         
-        # SAFETY WARNING
+        # SAFETY CHECK
         net_profit_fail = p1['fail_refund'] - fee
-        if net_profit_fail < 0:
-            st.markdown(f"""
-            <div class='warning-box'>
-            ⚠️ <b>DANGER: Ratio Too High</b><br>
-            If you hit SL, you lose <b>${abs(net_profit_fail):.2f}</b>.<br>
-            Lower your Phase 1 Ratio to be safe.
-            </div>
-            """, unsafe_allow_html=True)
-
+        
         col_pass, col_fail = st.columns(2)
         with col_pass:
             st.info(f"Cost to Pass: -${p1['pass_cost']:,.2f}")
@@ -182,6 +162,8 @@ with t1:
         with col_fail:
             st.error(f"Refund if Fail: +${p1['fail_refund']:,.2f}")
             if st.button("Phase 1 FAILED", key="p1_fail"): st.session_state.phase1_status="Failed"; st.rerun()
+
+        st.caption(f"ℹ️ Refund Calculation assumes you drain the full {max_dd_pct*100}% drawdown limit.")
 
     elif st.session_state.phase1_status == "Passed":
         html_p1 = f"""
@@ -199,7 +181,7 @@ with t1:
         html_fail = f"""
         <div class="result-card" style="border-left: 5px solid #FF4B4B;">
             <div class="fail-header">❌ Phase 1 Failed</div>
-            <div class="money-row"><span>Refund (SL Hit):</span><span class="money-pos">+${p1['fail_refund']:,.2f}</span></div>
+            <div class="money-row"><span>Refund (Full Drain):</span><span class="money-pos">+${p1['fail_refund']:,.2f}</span></div>
             <div class="money-row"><span>Fee Paid:</span><span class="money-neg">-${fee:,.2f}</span></div>
             <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if net>0 else 'money-neg'}">${net:,.2f}</span></div>
         </div>"""
@@ -238,7 +220,7 @@ with t2:
             html_f2 = f"""
             <div class="result-card" style="border-left: 5px solid #FF4B4B;">
                 <div class="fail-header">❌ Phase 2 Failed</div>
-                <div class="money-row"><span>Refund (SL Hit):</span><span class="money-pos">+${p2['fail_refund']:,.2f}</span></div>
+                <div class="money-row"><span>Refund (Full Drain):</span><span class="money-pos">+${p2['fail_refund']:,.2f}</span></div>
                 <div class="money-row"><span>Sunk Costs:</span><span class="money-neg">-${fee + p1['pass_cost']:,.2f}</span></div>
                 <div class="total-row"><span>NET RESULT:</span><span class="{'money-pos' if net>0 else 'money-neg'}">${net:,.2f}</span></div>
             </div>"""
@@ -248,17 +230,8 @@ with t2:
 # === FUNDED ===
 with t3:
     st.markdown("<div class='big-header'>Funded Phase: Sniper Mode</div>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style='background-color:#1c1c1c; padding:10px; border-radius:5px; margin-bottom:15px; border-left:3px solid #FFD700;'>
-    <b>Strategy:</b> Target a specific withdrawal amount in <b>ONE</b> trade. 
-    If you lose, the account is burned (Trailing Drawdown), but you profit on CEX.
-    </div>
-    """, unsafe_allow_html=True)
 
     target_profit_amt = st.number_input("I want to withdraw this amount ($):", value=2000.0, step=100.0)
-    
-    if target_profit_amt < 50:
-        st.warning("⚠️ Minimum withdrawal is $50.")
     
     # TOOL SELECTION
     tool = st.radio("Hedge Strategy:", ["🎚️ Manual Ratio", "🎯 Guaranteed Fail Profit"], horizontal=True)
@@ -276,12 +249,14 @@ with t3:
         target_fail_profit = st.number_input("Desired Profit if Account Blows ($)", 600.0, step=50.0)
         
         # Solver Logic: CEX Win = Sunk + Desired
-        # CEX Win ~= Risk * Ratio (approx)
-        risk_usd = acct_size * risk_per_trade_pct
+        # CEX Win = Full Drain (8%) * Ratio
+        # Ratio = (Sunk + Desired) / (Account * 8%)
+        full_drain_amt = acct_size * max_dd_pct
         req_win = total_sunk + target_fail_profit
-        f_ratio = req_win / risk_usd
-        if f_ratio > 3.0: f_ratio = 3.0 # Safety cap
-        st.info(f"💡 Required Ratio: **{f_ratio:.2f}** (Calculated based on One-Shot Risk of ${risk_usd:.0f})")
+        f_ratio = req_win / full_drain_amt
+        
+        if f_ratio > 3.0: f_ratio = 3.0
+        st.info(f"💡 Required Ratio: **{f_ratio:.2f}** (Calculated based on Full {max_dd_pct*100}% Drain)")
 
     # CALC
     f_metrics = calculate_metrics(target_profit_amt, 0, is_funded=True, funded_ratio=f_ratio)
@@ -305,7 +280,7 @@ with t3:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #FF4B4B;">
             <div class="fail-header">SCENARIO B: MISS & BURN</div>
-            <div class="money-row"><span>Refund (1 Trade Risk):</span><span class="money-pos">+${f_metrics['fail_refund']:,.2f}</span></div>
+            <div class="money-row"><span>Refund (8% Drain):</span><span class="money-pos">+${f_metrics['fail_refund']:,.2f}</span></div>
             <div class="money-row"><span>Sunk Costs:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
             <div class="total-row"><span>EXIT PROFIT:</span><span class="{'money-pos' if fail_net>0 else 'money-neg'}">${fail_net:,.2f}</span></div>
         </div>
