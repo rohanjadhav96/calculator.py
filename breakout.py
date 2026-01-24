@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v19", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -13,51 +13,70 @@ if 'days_preset' not in st.session_state: st.session_state.days_preset = 2
 # --- STYLING ---
 st.markdown("""
 <style>
+    /* Main Layout */
     .big-header { font-size: 24px; font-weight: bold; color: #FFD700; margin-bottom: 15px; }
+    
+    /* Result Cards */
     .result-card { background-color: #0e1117; border: 1px solid #333; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+    
+    /* Money Colors */
     .money-pos { color: #00FF7F; font-weight: bold; }
     .money-neg { color: #FF4B4B; font-weight: bold; }
+    
+    /* Headers inside cards */
     .pass-header { color: #00FF7F; font-size: 1.4em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
     .fail-header { color: #FF4B4B; font-size: 1.4em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+    
+    /* Rows */
     .money-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
     .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 1px solid #444; font-size: 1.2em; font-weight: bold; }
+    
+    /* Solver Box */
     .solver-box { border: 1px solid #00BFFF; background-color: #0a1320; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+    
+    /* Info Box (Side Notes) */
+    .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v19")
-st.caption("Updated: Funded Phase 'Freedom Mode' (No Target, Min $50 Withdrawal)")
+st.title("🛡️ Breakout Hedge Commander")
+st.caption("Strategic Arbitrage Calculator & Execution Planner")
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("1. Quick Presets")
+    st.header("1. Strategy Presets")
+    st.markdown("<div class='info-box'><b>Preset Guide:</b><br>• <b>SAFE:</b> Risks 2% per trade. Takes 3 days. Good for beginners.<br>• <b>SPEED:</b> Risks 4.8% per trade. Takes 1 day. High speed/turnover.</div>", unsafe_allow_html=True)
+    
     c1, c2 = st.columns(2)
-    if c1.button("🛡️ SAFE"):
+    if c1.button("🛡️ SAFE MODE"):
         st.session_state.risk_preset = 2.0
         st.session_state.days_preset = 3
         st.rerun()
-    if c2.button("⚡ SPEED"):
+    if c2.button("⚡ SPEEDRUN"):
         st.session_state.risk_preset = 4.8
         st.session_state.days_preset = 0
         st.rerun()
 
+    st.markdown("---")
     st.header("2. Account Rules")
     acct_size = st.number_input("Account Size ($)", 50000, step=10000)
     fee = st.number_input("Signup Fee ($)", 450)
     
     st.header("3. Risk Management")
+    st.markdown("<div class='info-box'><b>Risk Per Trade:</b> Set this below 5% to avoid hitting the Daily Limit in one bad tick. 4.0% - 4.8% is ideal for speed.</div>", unsafe_allow_html=True)
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
     
     st.header("4. Hedge Ratios")
+    st.markdown("<div class='info-box'><b>Ratio Logic:</b> Higher Ratio = Less capital used on CEX, but harder to get a refund if you fail.</div>", unsafe_allow_html=True)
     ratio_p1 = st.number_input("Phase 1 Ratio", 5.8, step=0.1)
     ratio_p2 = st.number_input("Phase 2 Ratio", 3.2, step=0.1)
     
     st.markdown("---")
     st.header("5. Market Friction")
     comm_rate = st.number_input("Commission (%)", 0.04, format="%.4f") / 100
-    zero_cex_fees = st.checkbox("🔥 Use Zero-Fee CEX?", value=True)
+    zero_cex_fees = st.checkbox("🔥 Use Zero-Fee CEX?", value=True, help="Check this if using a VIP account or Lighter.xyz to save fees.")
     
     include_swap = st.checkbox("Include Swap Fees?", value=(st.session_state.days_preset > 0))
     swap_rate = 0.0
@@ -113,12 +132,12 @@ p2 = calculate_metrics(acct_size * 0.10, ratio_p2)
 total_sunk = fee + p1['pass_cost'] + p2['pass_cost']
 
 # --- TABS ---
-t1, t2, t3 = st.tabs(["Phase 1", "Phase 2", "Funded"])
+t1, t2, t3 = st.tabs(["Phase 1", "Phase 2", "Funded Phase"])
 
 # === PHASE 1 ===
 with t1:
     st.markdown("<div class='big-header'>Phase 1 Setup</div>", unsafe_allow_html=True)
-    if risk_per_trade_pct > 0.045: st.caption("🔥 SPEEDRUN MODE DETECTED")
+    st.markdown("<div class='info-box'><b>Goal:</b> Hit 5% profit or Blow 8%.<br>This stage acts as a filter. If you fail here, the calculator ensures you get a refund via CEX profits.</div>", unsafe_allow_html=True)
     
     if st.session_state.phase1_status == "Pending":
         c1, c2, c3 = st.columns(3)
@@ -163,6 +182,8 @@ with t2:
         st.warning("🔒 Complete Phase 1 first.")
     else:
         st.markdown("<div class='big-header'>Phase 2 Setup</div>", unsafe_allow_html=True)
+        st.markdown("<div class='info-box'><b>Goal:</b> Hit 10% profit or Blow 8%.<br>We lower the Ratio here because the target is higher. If you fail, we aim to recover the Fee + Phase 1 costs.</div>", unsafe_allow_html=True)
+        
         if st.session_state.phase2_status == "Pending":
             col_pass, col_fail = st.columns(2)
             with col_pass:
@@ -198,25 +219,20 @@ with t2:
 # === FUNDED ===
 with t3:
     st.markdown("<div class='big-header'>Funded Phase: Freedom Mode</div>", unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div style="background-color:#111; padding:15px; border-radius:10px; border:1px solid #444; margin-bottom:20px;">
-        <h4 style="margin:0; color:#FFD700;">💰 Profit Goal Setting</h4>
-        <p style="color:#aaa;">Since there is no cap, define your own withdrawal target.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<div class='info-box'><b>Goal:</b> Withdraw Profits.<br>There is no profit target. You define how much you want to withdraw. Use the Solver below to ensure you are safe if you blow the account.</div>", unsafe_allow_html=True)
 
     # USER DEFINED GOAL
     target_profit_amt = st.number_input("I want to withdraw this amount ($):", value=2000.0, step=100.0)
     
     # SAFETY CHECK
     if target_profit_amt < 50:
-        st.warning("⚠️ Warning: Minimum withdrawal is $50. You must aim higher.")
+        st.warning("⚠️ Warning: Minimum withdrawal is usually $50.")
     
     # TOOL SELECTION
     tool = st.radio("Hedge Strategy:", ["🎚️ Manual Ratio", "🎯 Guaranteed Fail Profit"], horizontal=True)
     
     if tool == "🎚️ Manual Ratio":
+        st.info("Use the slider to set your own risk.")
         f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, 0.75, 0.01)
     else:
         st.markdown(f"""
@@ -230,7 +246,7 @@ with t3:
         req_win = total_sunk + target_fail_profit
         f_ratio = req_win / (acct_size * max_dd_pct)
         if f_ratio > 2.0: f_ratio = 2.0
-        st.info(f"💡 Required Ratio: **{f_ratio:.2f}**")
+        st.info(f"💡 Required Ratio: **{f_ratio:.2f}** (Risks ${f_ratio:.2f} on CEX per $1 Prop)")
 
     # CALC
     f_metrics = calculate_metrics(target_profit_amt, 0, is_funded=True, funded_ratio=f_ratio)
