@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v12", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -14,24 +14,28 @@ st.markdown("""
     /* Main Layout */
     .big-header { font-size: 24px; font-weight: bold; color: #4CAF50; margin-bottom: 10px; }
     
-    /* Diagnostic Box (The Doctor) */
-    .doctor-box { background-color: #1a1a1a; border-left: 5px solid #FFD700; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-    .doctor-title { color: #FFD700; font-weight: bold; font-size: 1.1em; margin-bottom: 5px; }
+    /* Result Cards (The User Favorites) */
+    .result-card { background-color: #0e1117; border: 1px solid #333; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
     
-    /* Result Boxes */
-    .pass-box { background-color: #0d3316; border: 1px solid #1f7a37; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 15px; }
-    .fail-box { background-color: #330d0d; border: 1px solid #7a1f1f; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 15px; }
+    .pass-header { color: #00FF7F; font-size: 1.5em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+    .fail-header { color: #FF4B4B; font-size: 1.5em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 10px; }
     
-    /* Text Colors */
+    /* Money Styles */
+    .money-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 1.0em; }
     .money-pos { color: #00FF7F; font-weight: bold; }
     .money-neg { color: #FF4B4B; font-weight: bold; }
     .money-neutral { color: #aaa; }
     
-    hr { border-color: #444; opacity: 0.5; }
+    /* Total Row */
+    .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 15px; border-top: 1px solid #444; font-size: 1.3em; font-weight: bold; }
+    
+    /* Optimizer Box */
+    .opt-box { background-color: #0d1117; border-left: 5px solid #00FF7F; padding: 15px; margin-top: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander")
+st.title("🛡️ Breakout Hedge Commander v12")
+st.caption("Restored Detailed Balance Sheets + Zero-Fee Toggle")
 
 # --- SIDEBAR: INPUTS ---
 with st.sidebar:
@@ -45,16 +49,14 @@ with st.sidebar:
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", 4.0) / 100
     
     st.header("3. Hedge Ratios")
-    st.caption("Evaluation Phase (Prop > CEX)")
+    st.caption("Evaluation Phase")
     ratio_p1 = st.number_input("Phase 1 Ratio", 5.8, step=0.1)
     ratio_p2 = st.number_input("Phase 2 Ratio", 3.2, step=0.1)
     
     st.markdown("---")
-    st.caption("Funded Phase (Harvest)")
-    funded_risk_per_dollar = st.number_input("CEX Risk per $1 Prop (e.g. 0.75)", 0.75, step=0.01)
-    
     st.header("4. Market Friction")
-    comm_rate = st.number_input("Commission (%)", 0.04, format="%.4f") / 100
+    comm_rate = st.number_input("Standard Commission (%)", 0.04, format="%.4f") / 100
+    zero_cex_fees = st.checkbox("🔥 Use Zero-Fee CEX?", value=False, help="Sets CEX commission to $0.")
     
     st.markdown("---")
     include_swap = st.checkbox("Include Swap Fees?", value=True)
@@ -66,95 +68,68 @@ with st.sidebar:
         days_held = 0.0
     
     st.markdown("---")
-    if st.button("🔄 FULL RESET", key="master_reset"):
+    if st.button("🔄 FULL RESET", key="reset_all"):
         st.session_state.phase1_status = "Pending"
         st.session_state.phase2_status = "Pending"
         st.rerun()
 
 # --- CALCULATION ENGINE ---
-def calculate_metrics(target_profit, ratio_val, is_funded=False):
+def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.0):
     risk_usd = acct_size * risk_per_trade_pct
-    sl_dist = 0.01 # Assume 1% SL for sizing calculation
+    sl_dist = 0.01 
     
-    # Position Sizes
     prop_size = risk_usd / sl_dist
     
     if is_funded:
-        # Funded: CEX Size = Prop * 0.75
-        cex_size = prop_size * funded_risk_per_dollar
-        eff_ratio = 1 / funded_risk_per_dollar if funded_risk_per_dollar > 0 else 999
+        effective_f_ratio = funded_ratio if funded_ratio > 0 else 1.0
+        cex_size = prop_size * effective_f_ratio
+        eff_ratio_divisor = 1/effective_f_ratio
     else:
-        # Eval: CEX Size = Prop / Ratio
         cex_size = prop_size / ratio_val
-        eff_ratio = ratio_val
+        eff_ratio_divisor = ratio_val
 
-    # Friction (Comms + Swap)
+    # FRICTION
+    prop_comm_cost = prop_size * comm_rate * 2 
+    cex_comm_rate_applied = 0.0 if zero_cex_fees else comm_rate
+    cex_comm_cost = cex_size * cex_comm_rate_applied * 2
+    
     prop_swap = (prop_size * swap_rate * days_held) if include_swap else 0
     cex_swap = (cex_size * swap_rate * days_held) if include_swap else 0
     
-    prop_friction = (prop_size * comm_rate * 2) + prop_swap
-    cex_friction = (cex_size * comm_rate * 2) + cex_swap
+    prop_friction = prop_comm_cost + prop_swap
+    cex_friction = cex_comm_cost + cex_swap
     
-    # PASS Logic
-    # Prop needs to Gross: Target + Friction
+    # 1. PASS SCENARIO
     prop_gross_needed = target_profit + prop_friction
     
     if is_funded:
-        cex_loss_pass = (prop_gross_needed * funded_risk_per_dollar) + cex_friction
+        cex_loss_pass = (prop_gross_needed * funded_ratio) + cex_friction
     else:
-        cex_loss_pass = (prop_gross_needed / eff_ratio) + cex_friction
+        cex_loss_pass = (prop_gross_needed / ratio_val) + cex_friction
 
-    # FAIL Logic (Max Drain)
+    # 2. FAIL SCENARIO (Max Drain)
     total_prop_drain = acct_size * max_dd_pct
-    drain_multiplier = max_dd_pct / risk_per_trade_pct # e.g. 8% / 4% = 2 trades to drain
+    drain_multiplier = max_dd_pct / risk_per_trade_pct
     
     if is_funded:
-        # If we blow funded, we win on CEX
-        cex_win_fail = (total_prop_drain * funded_risk_per_dollar) - (cex_friction * drain_multiplier)
+        cex_win_gross = total_prop_drain * funded_ratio
     else:
-        cex_win_fail = (total_prop_drain / eff_ratio) - (cex_friction * drain_multiplier)
+        cex_win_gross = total_prop_drain / ratio_val
+        
+    cex_win_net = cex_win_gross - (cex_friction * drain_multiplier)
 
     return {
+        "cex_loss_pass": cex_loss_pass,
+        "cex_win_fail": cex_win_net,
         "prop_size": prop_size,
         "cex_size": cex_size,
-        "cex_loss_pass": cex_loss_pass,
-        "cex_win_fail": cex_win_fail,
-        "risk_usd": risk_usd,
-        "prop_friction": prop_friction,
-        "cex_friction": cex_friction
+        "prop_friction": prop_friction
     }
 
-# Execute Calculations
+# Execute Base Calculations
 p1 = calculate_metrics(acct_size * 0.05, ratio_p1)
 p2 = calculate_metrics(acct_size * 0.10, ratio_p2)
-funded = calculate_metrics(acct_size * 0.05, 0, is_funded=True)
-
-# --- DIAGNOSTIC DOCTOR (Auto-Check) ---
-issues = []
-
-# 1. Check Phase 1 Fail
-net_p1_fail = p1['cex_win_fail'] - fee
-if net_p1_fail < 0:
-    issues.append(f"⚠️ **Phase 1 Ratio too high:** If you fail, you lose ${abs(net_p1_fail):.0f}. Lower Ratio 1 slightly.")
-
-# 2. Check Funded Profitability (The Fix for your screenshot)
-payout_gross = (acct_size * 0.05) * 0.90
-monthly_net = payout_gross - funded['cex_loss_pass']
-if monthly_net < 0:
-    # Calculate Breakeven Ratio
-    # Net = Payout - (Prop_Gross * Ratio + Friction)
-    # We need to solve for Ratio where Net > 0
-    # Approx logic for recommendation:
-    prop_gross_approx = (acct_size * 0.05) + funded['prop_friction']
-    rec_ratio = (payout_gross - funded['cex_friction']) / prop_gross_approx
-    issues.append(f"🚨 **Funded Settings Unprofitable:** You are losing ${abs(monthly_net):.2f} per payout due to fees. **Lower your 'Funded Risk Ratio' to {rec_ratio:.2f} or less.**")
-
-if issues:
-    st.markdown('<div class="doctor-box"><div class="doctor-title">🩺 Strategy Doctor Alerts</div>', unsafe_allow_html=True)
-    for issue in issues:
-        st.markdown(issue)
-    st.markdown('</div>', unsafe_allow_html=True)
-
+total_sunk = fee + p1['cex_loss_pass'] + p2['cex_loss_pass']
 
 # --- MAIN TABS ---
 tab1, tab2, tab3 = st.tabs(["PHASE 1 (Eval)", "PHASE 2 (Verify)", "PHASE 3 (Funded)"])
@@ -165,20 +140,21 @@ with tab1:
     
     if st.session_state.phase1_status == "Pending":
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Risk (4%)", f"${p1['risk_usd']:,.0f}")
-        c2.metric("Prop Size", f"${p1['prop_size']:,.0f}")
-        c3.metric("CEX Size", f"${p1['cex_size']:,.0f}")
-        c4.metric("Daily Limit", f"${acct_size*daily_dd_pct:,.0f}")
+        c1.metric("Risk", f"${acct_size*risk_per_trade_pct:,.0f}")
+        c2.metric("Daily Limit", f"${acct_size*daily_dd_pct:,.0f}")
+        c3.metric("Prop Size", f"${p1['prop_size']:,.0f}")
+        c4.metric("CEX Size", f"${p1['cex_size']:,.0f}")
         
         st.markdown("---")
-        
+        if zero_cex_fees:
+            st.success("🔥 Zero-Fee Mode Active")
+            
         col_pass, col_fail = st.columns(2)
         with col_pass:
             st.info(f"**Cost to Pass:** -${p1['cex_loss_pass']:,.2f}")
             if st.button("Phase 1 PASSED", key="btn_p1_pass"): 
                 st.session_state.phase1_status = "Passed"
                 st.rerun()
-                
         with col_fail:
             st.error(f"**Refund if Fail:** +${p1['cex_win_fail']:,.2f}")
             if st.button("Phase 1 FAILED", key="btn_p1_fail"): 
@@ -186,10 +162,16 @@ with tab1:
                 st.rerun()
 
     elif st.session_state.phase1_status == "Passed":
+        # PASSED CARD
         st.markdown(f"""
-        <div class='pass-box'>
-            <h3>✅ Phase 1 Passed</h3>
-            <p>You paid a hedge cost of <span class='money-neg'>-${p1['cex_loss_pass']:,.2f}</span></p>
+        <div class="result-card" style="border-left: 5px solid #00FF7F;">
+            <div class="pass-header">✅ Phase 1 Passed</div>
+            <div class="money-row"><span>Evaluation Fee:</span><span class="money-neg">-${fee:,.2f}</span></div>
+            <div class="money-row"><span>CEX Hedge Cost:</span><span class="money-neg">-${p1['cex_loss_pass']:,.2f}</span></div>
+            <div class="total-row">
+                <span>Current Sunk Cost:</span>
+                <span class="money-neg">-${fee + p1['cex_loss_pass']:,.2f}</span>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         if st.button("Undo Phase 1", key="undo_p1"): 
@@ -197,15 +179,17 @@ with tab1:
             st.rerun()
 
     elif st.session_state.phase1_status == "Failed":
+        # FAILED CARD (Detailed Refund Logic)
         net_res = p1['cex_win_fail'] - fee
-        color_net = "money-pos" if net_res > 0 else "money-neg"
         st.markdown(f"""
-        <div class='fail-box'>
-            <h3>❌ Phase 1 Failed (Drained)</h3>
-            <p>CEX Refund: <span class='money-pos'>+${p1['cex_win_fail']:,.2f}</span></p>
-            <p>Fee Paid: <span class='money-neg'>-${fee:,.2f}</span></p>
-            <hr>
-            <h4>Net Result: <span class='{color_net}'>${net_res:,.2f}</span></h4>
+        <div class="result-card" style="border-left: 5px solid #FF4B4B;">
+            <div class="fail-header">❌ Phase 1 Failed (Drained)</div>
+            <div class="money-row"><span>CEX Gross Refund:</span><span class="money-pos">+${p1['cex_win_fail']:,.2f}</span></div>
+            <div class="money-row"><span>Evaluation Fee Paid:</span><span class="money-neg">-${fee:,.2f}</span></div>
+            <div class="total-row">
+                <span>NET PROFIT (Refund - Fee):</span>
+                <span class="{'money-pos' if net_res>0 else 'money-neg'}">${net_res:,.2f}</span>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         if st.button("Restart Phase 1", key="rest_p1"): 
@@ -215,37 +199,39 @@ with tab1:
 # === PHASE 2 ===
 with tab2:
     if st.session_state.phase1_status != "Passed":
-        st.warning("🔒 Locked: You must Pass Phase 1 first.")
-    
+        st.warning("🔒 Complete Phase 1 first.")
     elif st.session_state.phase2_status == "Pending":
         st.markdown("<div class='big-header'>Phase 2: Verification</div>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
-        c1.metric("Risk", f"${p2['risk_usd']:,.0f}")
+        c1.metric("Risk", f"${acct_size*risk_per_trade_pct:,.0f}")
         c2.metric("Prop Size", f"${p2['prop_size']:,.0f}")
         c3.metric("CEX Size", f"${p2['cex_size']:,.0f}")
         
         st.markdown("---")
-        
         col_pass, col_fail = st.columns(2)
         with col_pass:
             st.info(f"**Cost to Pass:** -${p2['cex_loss_pass']:,.2f}")
             if st.button("Phase 2 PASSED", key="btn_p2_pass"): 
                 st.session_state.phase2_status = "Passed"
                 st.rerun()
-                
         with col_fail:
             st.error(f"**Refund if Fail:** +${p2['cex_win_fail']:,.2f}")
             if st.button("Phase 2 FAILED", key="btn_p2_fail"): 
                 st.session_state.phase2_status = "Failed"
                 st.rerun()
-    
+                
     elif st.session_state.phase2_status == "Passed":
-        total_sunk = fee + p1['cex_loss_pass'] + p2['cex_loss_pass']
+        # FUNDED CARD
         st.markdown(f"""
-        <div class='pass-box'>
-            <h3>🏆 FUNDED!</h3>
-            <p>You have passed both evaluations.</p>
-            <h4>Total Sunk Cost (Investment): <span class='money-neg'>-${total_sunk:,.2f}</span></h4>
+        <div class="result-card" style="border-left: 5px solid #00FF7F;">
+            <div class="pass-header">🏆 YOU ARE FUNDED!</div>
+            <div class="money-row"><span>Phase 1 Cost:</span><span class="money-neg">-${p1['cex_loss_pass']:,.2f}</span></div>
+            <div class="money-row"><span>Phase 2 Cost:</span><span class="money-neg">-${p2['cex_loss_pass']:,.2f}</span></div>
+            <div class="money-row"><span>Fee:</span><span class="money-neg">-${fee:,.2f}</span></div>
+            <div class="total-row">
+                <span>TOTAL INVESTMENT:</span>
+                <span class="money-neg">-${total_sunk:,.2f}</span>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         if st.button("Undo Phase 2", key="undo_p2"): 
@@ -253,57 +239,78 @@ with tab2:
             st.rerun()
             
     elif st.session_state.phase2_status == "Failed":
-        st.markdown(f"<div class='fail-box'><h3>❌ Phase 2 Failed</h3><p>Recovered: ${p2['cex_win_fail']:,.2f}</p></div>", unsafe_allow_html=True)
+        net_res_p2 = p2['cex_win_fail'] - (fee + p1['cex_loss_pass'])
+        st.markdown(f"""
+        <div class="result-card" style="border-left: 5px solid #FF4B4B;">
+            <div class="fail-header">❌ Phase 2 Failed</div>
+            <div class="money-row"><span>CEX Refund:</span><span class="money-pos">+${p2['cex_win_fail']:,.2f}</span></div>
+            <div class="money-row"><span>Sunk Costs (Fee+P1):</span><span class="money-neg">-${fee + p1['cex_loss_pass']:,.2f}</span></div>
+            <div class="total-row">
+                <span>NET RESULT:</span>
+                <span class="{'money-pos' if net_res_p2>0 else 'money-neg'}">${net_res_p2:,.2f}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         if st.button("Restart Phase 2", key="rest_p2"): 
             st.session_state.phase2_status = "Pending"
             st.rerun()
 
 # === PHASE 3 ===
 with tab3:
-    if st.session_state.phase2_status != "Passed":
-        st.warning("🔒 Locked: You must Pass Phase 2 first.")
-    else:
-        st.markdown("<div class='big-header'>Phase 3: The Harvest</div>", unsafe_allow_html=True)
+    st.markdown("<div class='big-header'>Funded Phase: Harvest</div>", unsafe_allow_html=True)
+    
+    # INPUTS
+    f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 1.0, 0.75, 0.01)
+    
+    # CALCS
+    funded_metrics = calculate_metrics(acct_size*0.05, 0, is_funded=True, funded_ratio=f_ratio)
+    prop_payout = (acct_size * 0.05) * 0.90
+    hedge_cost = funded_metrics['cex_loss_pass']
+    monthly_net = prop_payout - hedge_cost
+    total_net = monthly_net - total_sunk
+    
+    # --- THE BALANCE SHEET (User Requested) ---
+    st.markdown(f"""
+    <div class="result-card" style="border: 1px solid #FFD700;">
+        <div style="color: #FFD700; font-size: 1.5em; font-weight: bold; margin-bottom: 15px;">💰 Final Profit Calculation</div>
         
-        total_sunk = fee + p1['cex_loss_pass'] + p2['cex_loss_pass']
-        
-        # Calculations
-        prop_gross = (acct_size * 0.05)
-        payout_net = prop_gross * 0.90
-        hedge_cost = funded['cex_loss_pass']
-        monthly_profit = payout_net - hedge_cost
-        
-        total_net = monthly_profit - total_sunk
-        
-        # Display
-        st.markdown(f"""
-        <div style="background-color:#1E1E1E; padding:20px; border-radius:10px; border:1px solid #444;">
-            <h3 style="margin-top:0;">💰 Profit Calculator</h3>
-            <table style="width:100%; color:#eee;">
-                <tr>
-                    <td>Prop Payout (90%):</td>
-                    <td style="text-align:right;" class="money-pos">+${payout_net:,.2f}</td>
-                </tr>
-                <tr>
-                    <td>CEX Hedge Cost:</td>
-                    <td style="text-align:right;" class="money-neg">-${hedge_cost:,.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding-top:10px;"><strong>MONTHLY NET PROFIT:</strong></td>
-                    <td style="text-align:right; padding-top:10px;" class="{'money-pos' if monthly_profit > 0 else 'money-neg'}"><strong>${monthly_profit:,.2f}</strong></td>
-                </tr>
-            </table>
+        <div class="money-row">
+            <span>Prop Firm Payout (90%):</span>
+            <span class="money-pos">+${prop_payout:,.2f}</span>
         </div>
+        <div class="money-row">
+            <span>CEX Hedge Burn (Cost):</span>
+            <span class="money-neg">-${hedge_cost:,.2f}</span>
+        </div>
+        <div style="border-top: 1px solid #333; margin: 10px 0;"></div>
+        <div class="money-row" style="font-size: 1.1em; font-weight: bold;">
+            <span>Net Monthly Profit:</span>
+            <span class="{'money-pos' if monthly_net > 0 else 'money-neg'}">${monthly_net:,.2f}</span>
+        </div>
+        
         <br>
-        """, unsafe_allow_html=True)
+        <div class="money-row" style="color: #aaa;">
+            <span>Previous Sunk Costs (Fee + P1 + P2):</span>
+            <span>-${total_sunk:,.2f}</span>
+        </div>
         
-        # Optimization Tip
-        if monthly_profit <= 0:
-            st.warning("⚠️ **You are currently losing money.** Reduce the 'Funded Phase' Ratio in the sidebar until Monthly Net Profit turns GREEN.")
-        
+        <div class="total-row">
+            <span>TOTAL NET PROFIT:</span>
+            <span class="{'money-pos' if total_net > 0 else 'money-neg'}">${total_net:,.2f}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # OPTIMIZER ALERT
+    prop_gross_approx = (acct_size * 0.05) + funded_metrics['prop_friction']
+    breakeven_ratio = prop_payout / prop_gross_approx
+    if not zero_cex_fees: breakeven_ratio *= 0.95
+
+    if monthly_net < 0:
         st.markdown(f"""
-        <div style="background-color:#000; padding:15px; border-radius:5px; margin-top:20px;">
-            <p style="color:#888; font-size:0.9em;">Previous Sunk Costs: -${total_sunk:,.2f}</p>
-            <h2 style="color:{'#00FF7F' if total_net > 0 else '#FF4B4B'}">TOTAL NET (Lifetime): ${total_net:,.2f}</h2>
+        <div class="opt-box" style="border-left-color: #FF4B4B; background-color: #220a0a;">
+            <h4 style="margin:0; color: #FF4B4B;">⚠️ Unprofitable Settings</h4>
+            <p>Your ratio ({f_ratio}) is too high for your fees.</p>
+            <p><strong>Recommendation:</strong> Slide ratio below <strong>{breakeven_ratio:.2f}</strong> to turn Green.</p>
         </div>
         """, unsafe_allow_html=True)
