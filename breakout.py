@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import math
 
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Breakout Hedge Commander", layout="wide", page_icon="🛡️")
@@ -48,19 +49,19 @@ with st.sidebar:
     st.markdown("""
     <div class='info-box'>
     <b>Preset Guide:</b><br>
-    • <b>SAFE:</b> Risks 4% per trade. Takes 2 days. Balanced safety.<br>
-    • <b>SPEED:</b> Risks 4.8% per trade. Takes 1 day. Max aggression.
+    • <b>SAFE (Multi-Day):</b> Risk 4.0%. Takes 2+ trades to pass. Safer buffer.<br>
+    • <b>ONE-SHOT (Speed):</b> Risk 4.8%. Aim to Pass in 1 Trade. Max aggression.
     </div>
     """, unsafe_allow_html=True)
     
     c1, c2 = st.columns(2)
-    if c1.button("🛡️ SAFE MODE"):
+    if c1.button("🛡️ SAFE"):
         st.session_state.risk_preset = 4.0
         st.session_state.days_preset = 2
         st.rerun()
-    if c2.button("⚡ SPEEDRUN"):
+    if c2.button("⚡ ONE-SHOT"):
         st.session_state.risk_preset = 4.8
-        st.session_state.days_preset = 0
+        st.session_state.days_preset = 0 # Intraday
         st.rerun()
 
     st.markdown("---")
@@ -69,10 +70,13 @@ with st.sidebar:
     fee = st.number_input("Signup Fee ($)", 450)
     
     st.header("3. Risk Management")
-    st.markdown("<div class='info-box'><b>Risk Per Trade:</b> Set this below 5% to avoid hitting the Daily Limit.</div>", unsafe_allow_html=True)
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
+    
+    # Logic Check
+    trades_to_pass_p1 = math.ceil(0.05 / risk_per_trade_pct)
+    st.caption(f"ℹ️ At this risk, you need **{trades_to_pass_p1} winning trade(s)** to pass Phase 1.")
     
     st.header("4. Hedge Ratios")
     st.markdown("<div class='info-box'><b>Ratio Logic:</b> Higher Ratio = Less capital used on CEX, but harder to get a refund if you fail.</div>", unsafe_allow_html=True)
