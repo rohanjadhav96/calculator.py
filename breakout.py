@@ -1,152 +1,176 @@
 import streamlit as st
 import pandas as pd
 
-# Page Config
-st.set_page_config(page_title="Breakout Hedge Architect", layout="wide", page_icon="⚖️")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Breakout Hedge Pro (Strict Math)", layout="wide", page_icon="🧮")
 
-# Custom CSS for dark mode aesthetics
+# Custom Styling
 st.markdown("""
 <style>
-    .stMetric {
-        background-color: #1E1E1E;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #333;
-    }
-    .big-font {
-        font-size: 20px !important;
-        font-weight: bold;
-    }
-    .success-text { color: #00FF7F; }
-    .danger-text { color: #FF4B4B; }
+    .metric-card { background-color: #1E1E1E; padding: 15px; border-radius: 8px; border: 1px solid #333; }
+    .profit-text { color: #00FF7F; font-weight: bold; }
+    .loss-text { color: #FF4B4B; font-weight: bold; }
+    .warning-text { color: #FFA500; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("⚖️ Prop Firm Arbitrage Calculator")
-st.markdown("### Strategy: Breakout 2-Step (Classic)")
+st.title("🧮 Breakout Hedge Pro: The 'True Cost' Calculator")
+st.markdown("This tool includes **Commissions, Slippage, and Swaps** to match the Python script logic exactly.")
 
-# --- SIDEBAR INPUTS ---
-st.sidebar.header("⚙️ Account Parameters")
-
-with st.sidebar.expander("1. Prop Firm Rules", expanded=True):
-    account_size = st.number_input("Account Size ($)", value=50000, step=10000)
-    fee = st.number_input("Evaluation Fee ($)", value=450)
+# --- SIDEBAR: INPUTS ---
+with st.sidebar:
+    st.header("1. Account & Rules")
+    acct_size = st.number_input("Account Size ($)", 50000, step=10000)
+    fee = st.number_input("Evaluation Fee ($)", 450)
+    leverage = st.number_input("Max Leverage Allowed", 5, help="Breakout BTC/ETH is usually 5:1")
+    daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     
-    st.markdown("---")
-    st.markdown("**Targets & Limits**")
-    p1_target_pct = st.slider("Phase 1 Target (%)", 1.0, 20.0, 5.0, 0.5) / 100
-    p2_target_pct = st.slider("Phase 2 Target (%)", 1.0, 20.0, 10.0, 0.5) / 100
-    max_dd_pct = st.slider("Max Drawdown (%)", 1.0, 15.0, 8.0, 0.5) / 100
-    payout_share = st.slider("Payout Share (%)", 50, 100, 90, 5) / 100
-
-with st.sidebar.expander("2. Hedge Ratios (Prop : CEX)", expanded=True):
-    st.info("Higher Ratio = Less CEX capital needed, but harder to 'Refund' if you fail.")
-    ratio_p1 = st.number_input("Phase 1 Ratio", value=5.8, step=0.1, help="e.g. 5.8 means 5.8 lots on Prop for every 1 lot on CEX.")
-    ratio_p2 = st.number_input("Phase 2 Ratio", value=3.2, step=0.1)
+    st.header("2. Market Conditions")
+    # Matches screenshot logic: commission = 0.0004 (0.04%)
+    comm_rate = st.number_input("Commission Rate (%)", 0.04, step=0.01, format="%.4f") / 100
+    slippage_pct = st.number_input("Est. Slippage (%)", 0.05, step=0.01) / 100
+    spread_pct = st.number_input("Spread (%)", 0.02, step=0.01) / 100
     
+    st.header("3. Holding Costs")
+    funding_rate_8h = st.number_input("Funding Rate (per 8h %)", 0.01, format="%.4f") / 100
+    days_held = st.number_input("Days to Hit Target", 2, step=1)
+    
+    st.header("4. Ratios (Prop:CEX)")
+    ratio_p1 = st.number_input("Phase 1 Ratio", 5.8, step=0.1)
+    ratio_p2 = st.number_input("Phase 2 Ratio", 3.2, step=0.1)
+
+# --- CALCULATOR FUNCTIONS ---
+
+def calculate_true_cost(target_net_profit, ratio, max_loss_limit):
+    """
+    Reverse engineers the trade to find out how much we actually need to Gross
+    to net the target after paying commissions and slippage.
+    """
+    # 1. We need to find the required Position Size first.
+    # Logic: To be safe, we base Position Size on the MAX LOSS LIMIT (Daily Limit).
+    # If price moves X% against us, we must not lose more than Max Loss.
+    # Let's assume a Stop Loss distance of 4% (leaving 1% buffer for daily limit) for safety.
+    stop_loss_dist = 0.04 
+    
+    # Notional Position Size = Max_Risk / Stop_Loss_Dist
+    # However, user wants "Max Size Possible".
+    # Max Size by Leverage = Account * Leverage
+    max_size_lev = acct_size * leverage
+    
+    # Max Size by Daily Limit (Assuming 1% bad wick/slippage on a 5% limit) is safer
+    # But to match "Max Size" request, we use Leverage limit, but warn about risk.
+    pos_size_prop = max_size_lev 
+    
+    # 2. Calculate Costs on Prop Side
+    prop_comm_cost = pos_size_prop * comm_rate
+    prop_slippage_cost = pos_size_prop * slippage_pct
+    prop_spread_cost = pos_size_prop * spread_pct
+    prop_swap_cost = pos_size_prop * funding_rate_8h * 3 * days_held # 3 intervals per day
+    
+    total_prop_friction = prop_comm_cost + prop_slippage_cost + prop_spread_cost + prop_swap_cost
+    
+    # 3. To Net $2500, we need to Gross ($2500 + Friction)
+    required_gross_win = target_net_profit + total_prop_friction
+    
+    # 4. Calculate CEX Side
+    pos_size_cex = pos_size_prop / ratio
+    cex_comm_cost = pos_size_cex * comm_rate # Assuming similar fees on CEX
+    cex_swap_cost = pos_size_cex * funding_rate_8h * 3 * days_held
+    
+    # The CEX Loss is the Gross Win divided by Ratio
+    cex_trading_loss = required_gross_win / ratio
+    
+    # Total Cost to Pass = CEX Loss + CEX Fees
+    total_cost_cex = cex_trading_loss + cex_comm_cost + cex_swap_cost
+    
+    return {
+        "prop_size": pos_size_prop,
+        "cex_size": pos_size_cex,
+        "prop_friction": total_prop_friction,
+        "cex_loss_total": total_cost_cex,
+        "gross_needed": required_gross_win
+    }
+
+# --- PERFORM CALCULATIONS ---
+
+# Phase 1
+p1_target = acct_size * 0.05
+p1_data = calculate_true_cost(p1_target, ratio_p1, acct_size * daily_dd_pct)
+
+# Phase 2
+p2_target = acct_size * 0.10
+p2_data = calculate_true_cost(p2_target, ratio_p2, acct_size * daily_dd_pct)
+
+# Total
+total_sunk = p1_data['cex_loss_total'] + p2_data['cex_loss_total'] + fee
+
+# --- DISPLAY ---
+
+st.header("📊 Detailed Execution Plan (True Cost)")
+
+# Warning about Max Size
+if p1_data['prop_size'] > (acct_size * daily_dd_pct) / 0.01:
+    st.error(f"⚠️ **CRITICAL WARNING:** You requested 'Max Size' (${p1_data['prop_size']:,.0f}). This size is dangerously high. A 1% move against you will breach the Daily Drawdown. Recommended size: < ${(acct_size*daily_dd_pct)/0.02:,.0f}.")
+
+# TABS
+tab1, tab2, tab3 = st.tabs(["Phase 1 Checklist", "Phase 2 Checklist", "Financial Breakdown"])
+
+with tab1:
+    st.subheader("Phase 1: The Filter")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"""
+        ### 🟢 Prop Account Setup
+        * **Position Size (Notional):** `${p1_data['prop_size']:,.0f}`
+        * **Leverage Used:** {leverage}x
+        * **Target Net Profit:** ${p1_target:,.0f}
+        * **Actual Gross Target:** `${p1_data['gross_needed']:,.2f}`
+        * *(You need extra profit to cover ${p1_data['prop_friction']:,.2f} in fees/swaps)*
+        """)
+    with c2:
+        st.markdown(f"""
+        ### 🔴 CEX Account Setup
+        * **Position Size (Notional):** `${p1_data['cex_size']:,.0f}`
+        * **Direction:** Opposite to Prop
+        * **Expected Loss:** `${p1_data['cex_loss_total']:,.2f}`
+        """)
+
     st.markdown("---")
-    st.markdown("**Funded Phase Strategy**")
-    st.caption("In funded stage, we usually reverse the ratio (Risk more on CEX) or balance it to guarantee payout.")
-    ratio_funded = st.number_input("Funded Ratio (Prop : CEX)", value=0.75, step=0.05, help="0.75 means you risk LESS on Prop than CEX to secure the payout.")
+    outcome = st.selectbox("Phase 1 Result?", ["Select...", "Pass", "Fail"], key="o1")
+    if outcome == "Pass":
+        st.success(f"Move to Phase 2. Cost incurred: ${p1_data['cex_loss_total']:,.2f}")
+    elif outcome == "Fail":
+        refund = (acct_size * 0.08) / ratio_p1 # Approx win
+        st.error(f"Account Failed. Refund calculated: +${refund:,.2f}. Net: {refund - fee - p1_data['cex_loss_total']}")
 
-# --- CALCULATIONS ---
+with tab2:
+    st.subheader("Phase 2: Verification")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"""
+        ### 🟢 Prop Account Setup
+        * **Position Size:** `${p2_data['prop_size']:,.0f}`
+        * **Target Net Profit:** ${p2_target:,.0f}
+        * **Actual Gross Target:** `${p2_data['gross_needed']:,.2f}`
+        """)
+    with c2:
+        st.markdown(f"""
+        ### 🔴 CEX Account Setup
+        * **Position Size:** `${p2_data['cex_size']:,.0f}`
+        * **Expected Loss:** `${p2_data['cex_loss_total']:,.2f}`
+        """)
 
-# Dollar Values
-p1_target = account_size * p1_target_pct
-p2_target = account_size * p2_target_pct
-max_loss_amt = account_size * max_dd_pct
-
-# Phase 1 Math
-p1_cost_to_pass = p1_target / ratio_p1  # Loss on CEX
-p1_fail_gross_win = max_loss_amt / ratio_p1 # Win on CEX
-p1_fail_net = p1_fail_gross_win - fee # Net profit/loss if prop acc blows
-
-# Phase 2 Math
-p2_cost_to_pass = p2_target / ratio_p2
-p2_fail_gross_win = max_loss_amt / ratio_p2
-# If we fail P2, we gained the P2 CEX win, but we lost the Fee AND the cost to pass P1.
-p2_fail_net = p2_fail_gross_win - p1_cost_to_pass - fee 
-
-# Total Investment to get Funded
-total_sunk_cost = p1_cost_to_pass + p2_cost_to_pass + fee
-
-# Funded Phase Math (Scenario: Making 5% on Prop Account to get first payout)
-funded_target_profit = account_size * 0.05 # e.g. $2500
-funded_cex_loss = funded_target_profit / ratio_funded # Amount lost on CEX to gain that profit on Prop
-prop_payout = funded_target_profit * payout_share
-net_profit_funded = prop_payout - funded_cex_loss
-
-# --- DASHBOARD LAYOUT ---
-
-# Row 1: The "Fail Safe" Check
-st.subheader("1. The Safety Net Test")
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("Max Drawdown Limit", f"${max_loss_amt:,.0f}")
-
-with col2:
-    status_p1 = "✅ PROFITABLE FAIL" if p1_fail_net > 0 else "⚠️ LOSS IF FAIL"
-    st.metric("Phase 1: If You Fail", f"${p1_fail_net:,.2f}", delta=status_p1, delta_color="off" if p1_fail_net < 0 else "normal")
-    st.caption(f"CEX Win (${p1_fail_gross_win:,.0f}) - Fee (${fee})")
-
-with col3:
-    status_p2 = "✅ PROFITABLE FAIL" if p2_fail_net > 0 else "⚠️ LOSS IF FAIL"
-    st.metric("Phase 2: If You Fail", f"${p2_fail_net:,.2f}", delta=status_p2, delta_color="off" if p2_fail_net < 0 else "normal")
-    st.caption(f"CEX Win - P1 Cost - Fee")
-
-st.markdown("---")
-
-# Row 2: Investment Required
-st.subheader("2. Cost to Get Funded")
-c1, c2 = st.columns([1, 2])
-
-with c1:
-    st.write(f"**Phase 1 CEX Loss:** ${p1_cost_to_pass:,.2f}")
-    st.write(f"**Phase 2 CEX Loss:** ${p2_cost_to_pass:,.2f}")
-    st.write(f"**Evaluation Fee:** ${fee:,.2f}")
-    st.markdown("#### Total Risk: ")
-    st.markdown(f"<h2 style='color: #FF4B4B'>${total_sunk_cost:,.2f}</h2>", unsafe_allow_html=True)
-    st.caption("This is the cash required in your CEX account to hedge successfully.")
-
-with c2:
-    # Visualization of Costs
-    cost_data = pd.DataFrame({
-        'Stage': ['Fee', 'Phase 1 Hedge', 'Phase 2 Hedge'],
-        'Cost': [fee, p1_cost_to_pass, p2_cost_to_pass]
+with tab3:
+    st.subheader("💰 The Real Numbers")
+    
+    df = pd.DataFrame({
+        "Item": ["Evaluation Fee", "Phase 1 Cost (Hedge+Fees)", "Phase 2 Cost (Hedge+Fees)", "Total Investment"],
+        "Amount": [fee, p1_data['cex_loss_total'], p2_data['cex_loss_total'], total_sunk]
     })
-    st.bar_chart(cost_data, x='Stage', y='Cost', color="#FF4B4B")
-
-st.markdown("---")
-
-# Row 3: The Reward (Funded)
-st.subheader("3. Funded Phase Simulation")
-st.markdown("If you achieve a **5% profit** on the funded account ($2,500) using a **0.75:1 ratio**:")
-
-f1, f2, f3 = st.columns(3)
-with f1:
-    st.metric("Prop Payout (90%)", f"${prop_payout:,.2f}")
-with f2:
-    st.metric("CEX Hedge Loss", f"-${funded_cex_loss:,.2f}")
-with f3:
-    final_profit = net_profit_funded
-    st.metric("Net Profit (First Month)", f"${final_profit:,.2f}")
-
-# ROI Calculation
-roi = (final_profit / total_sunk_cost) * 100
-st.info(f"💡 **ROI Analysis:** If you pass and get one payout, you make **{roi:.1f}%** return on your total sunk costs (${total_sunk_cost:,.0f}).")
-
-# --- WARNING SECTION ---
-with st.expander("🚨 CRITICAL WARNING: Daily Drawdown"):
-    st.error(f"""
-    **Do NOT ignore the 5% Daily Drawdown Rule.**
+    st.table(df)
     
-    Your max total drawdown is {max_dd_pct*100}%, but your DAILY limit is likely 5%.
-    
-    If you use the hedging math based on the full {max_dd_pct*100}% stop loss, but the market moves against you by 5% in a SINGLE day, 
-    you will lose the Prop account instantly, but your CEX trade won't have hit the full target profit yet.
-    
-    **Result:** You lose the Prop Account AND you don't make enough on CEX to cover the fee.
-    
-    **Solution:** Calculate your position sizes based on **4.5%** Max Loss, not {max_dd_pct*100}%, to be safe.
-    """)
+    st.markdown(f"### 💡 ROI Analysis")
+    payout = (acct_size * 0.05) * 0.90
+    st.write(f"First Payout (Net 5%): **${payout:,.2f}**")
+    st.metric("Net Profit (Payout - Total Investment)", f"${payout - total_sunk:,.2f}")
+
