@@ -2,12 +2,11 @@ import streamlit as st
 import pandas as pd
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v18 (Ultimate)", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v19", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
 if 'phase2_status' not in st.session_state: st.session_state.phase2_status = "Pending"
-# Default Presets
 if 'risk_preset' not in st.session_state: st.session_state.risk_preset = 4.0
 if 'days_preset' not in st.session_state: st.session_state.days_preset = 2
 
@@ -15,32 +14,19 @@ if 'days_preset' not in st.session_state: st.session_state.days_preset = 2
 st.markdown("""
 <style>
     .big-header { font-size: 24px; font-weight: bold; color: #FFD700; margin-bottom: 15px; }
-    
-    /* Result Cards */
     .result-card { background-color: #0e1117; border: 1px solid #333; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-    
-    /* Money Colors */
     .money-pos { color: #00FF7F; font-weight: bold; }
     .money-neg { color: #FF4B4B; font-weight: bold; }
-    
-    /* Headers inside cards */
     .pass-header { color: #00FF7F; font-size: 1.4em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
     .fail-header { color: #FF4B4B; font-size: 1.4em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
-    
-    /* Rows */
     .money-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
     .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 1px solid #444; font-size: 1.2em; font-weight: bold; }
-    
-    /* Solver Box */
     .solver-box { border: 1px solid #00BFFF; background-color: #0a1320; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
-    
-    /* Badge */
-    .badge { background-color: #FFD700; color: black; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8em; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v18")
-st.caption("The Complete Suite: Solver + Balance Sheets + Speedrun Mode")
+st.title("🛡️ Breakout Hedge Commander v19")
+st.caption("Updated: Funded Phase 'Freedom Mode' (No Target, Min $50 Withdrawal)")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -211,13 +197,27 @@ with t2:
 
 # === FUNDED ===
 with t3:
-    st.markdown("<div class='big-header'>Funded Phase: Profit Engineer</div>", unsafe_allow_html=True)
+    st.markdown("<div class='big-header'>Funded Phase: Freedom Mode</div>", unsafe_allow_html=True)
     
-    # SELECTION
-    tool = st.radio("Mode:", ["🎚️ Manual Ratio", "🎯 Guaranteed Profit Solver"], horizontal=True)
+    st.markdown("""
+    <div style="background-color:#111; padding:15px; border-radius:10px; border:1px solid #444; margin-bottom:20px;">
+        <h4 style="margin:0; color:#FFD700;">💰 Profit Goal Setting</h4>
+        <p style="color:#aaa;">Since there is no cap, define your own withdrawal target.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # USER DEFINED GOAL
+    target_profit_amt = st.number_input("I want to withdraw this amount ($):", value=2000.0, step=100.0)
+    
+    # SAFETY CHECK
+    if target_profit_amt < 50:
+        st.warning("⚠️ Warning: Minimum withdrawal is $50. You must aim higher.")
+    
+    # TOOL SELECTION
+    tool = st.radio("Hedge Strategy:", ["🎚️ Manual Ratio", "🎯 Guaranteed Fail Profit"], horizontal=True)
     
     if tool == "🎚️ Manual Ratio":
-        f_ratio = st.slider("Hedge Ratio", 0.1, 2.0, 0.75, 0.01)
+        f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, 0.75, 0.01)
     else:
         st.markdown(f"""
         <div class="solver-box">
@@ -225,19 +225,19 @@ with t3:
             <p style="color:#ccc; font-size:0.9em;">Total Investment to Recover: <strong>${total_sunk:,.2f}</strong></p>
         </div>
         """, unsafe_allow_html=True)
-        target_profit = st.number_input("Desired Profit if Account Blows ($)", 600.0, step=50.0)
+        target_fail_profit = st.number_input("Desired Profit if Account Blows ($)", 600.0, step=50.0)
         
-        # Solver
-        req_win = total_sunk + target_profit
+        req_win = total_sunk + target_fail_profit
         f_ratio = req_win / (acct_size * max_dd_pct)
         if f_ratio > 2.0: f_ratio = 2.0
         st.info(f"💡 Required Ratio: **{f_ratio:.2f}**")
 
     # CALC
-    f_metrics = calculate_metrics(acct_size*0.05, 0, is_funded=True, funded_ratio=f_ratio)
+    f_metrics = calculate_metrics(target_profit_amt, 0, is_funded=True, funded_ratio=f_ratio)
     
-    payout = (acct_size * 0.05) * 0.90
-    monthly_net = payout - f_metrics['pass_cost']
+    # OUTPUTS
+    payout_gross = target_profit_amt * 0.90
+    monthly_net = payout_gross - f_metrics['pass_cost']
     fail_net = f_metrics['fail_refund'] - total_sunk
     
     # DISPLAY
@@ -245,16 +245,17 @@ with t3:
     with c1:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #00FF7F;">
-            <div style="color:#00FF7F; font-weight:bold; margin-bottom:10px;">SCENARIO A: PASS (Payout)</div>
-            <div class="money-row"><span>Payout:</span><span class="money-pos">+${payout:,.2f}</span></div>
+            <div class="pass-header">SCENARIO A: YOU WITHDRAW</div>
+            <div class="money-row"><span>Goal:</span><span style="color:white;">${target_profit_amt:,.2f}</span></div>
+            <div class="money-row"><span>Payout (90%):</span><span class="money-pos">+${payout_gross:,.2f}</span></div>
             <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
-            <div class="total-row"><span>MONTHLY NET:</span><span class="{'money-pos' if monthly_net>0 else 'money-neg'}">${monthly_net:,.2f}</span></div>
+            <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if monthly_net>0 else 'money-neg'}">${monthly_net:,.2f}</span></div>
         </div>
         """, unsafe_allow_html=True)
     with c2:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #FF4B4B;">
-            <div style="color:#FF4B4B; font-weight:bold; margin-bottom:10px;">SCENARIO B: FAIL (Blow Acct)</div>
+            <div class="fail-header">SCENARIO B: YOU BLOW ACCOUNT</div>
             <div class="money-row"><span>Refund:</span><span class="money-pos">+${f_metrics['fail_refund']:,.2f}</span></div>
             <div class="money-row"><span>Sunk Costs:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
             <div class="total-row"><span>EXIT PROFIT:</span><span class="{'money-pos' if fail_net>0 else 'money-neg'}">${fail_net:,.2f}</span></div>
@@ -262,4 +263,4 @@ with t3:
         """, unsafe_allow_html=True)
         
     if monthly_net < 0:
-        st.warning("⚠️ Warning: This ratio is too high. You are paying more in insurance than you earn in payout.")
+        st.error("⚠️ Unprofitable: Hedge Cost > Payout. Lower your ratio or increase your profit target.")
