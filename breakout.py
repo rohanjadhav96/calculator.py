@@ -37,19 +37,20 @@ st.markdown("""
     
     /* Info/Warning Boxes */
     .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
+    .warning-box { background-color: #2e0b0b; padding: 10px; border-left: 3px solid #FF4B4B; font-size: 0.9em; color: #ffcccc; margin-bottom: 15px; }
     .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v25")
-st.caption("Updated: Multi-Account Sizes + Profit Split Logic")
+st.title("🛡️ Breakout Hedge Commander")
+st.caption("Strategic Arbitrage Calculator & Execution Planner")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("1. Strategy Presets")
     st.markdown("""
     <div class='info-box'>
-    <b>Strategy: One-Shot</b><br>
+    <b>Strategy: One-Shot (Sniper)</b><br>
     Risk ~4.8% to pass in 1 trade.<br>
     Fail drains FULL 8% for max refund.
     </div>
@@ -68,21 +69,25 @@ with st.sidebar:
     split_choice = st.radio("Profit Split", ["90% (Pro)", "80% (Standard)"], horizontal=True)
     apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
     
-    # FEE LOGIC
-    # 25k: 80%=$275, 90%=$302
-    # 50k: 80%=$441, 90%=$486 (Derived from prompt: 90% is 486, split cost is 45)
-    # 100k: 80%=$1000, 90%=$1100
+    # FEE LOGIC (Updated to User Pricing)
+    # 25k: Base 250 | +25 for 90%
+    # 50k: Base 450 | +45 for 90%
+    # 100k: Base 750 | +75 for 90%
     
-    base_fee = 0
     if acct_choice == 25000:
-        base_fee = 302 if "90%" in split_choice else 275
+        base_fee = 250
+        add_on = 25
     elif acct_choice == 50000:
-        base_fee = 486 if "90%" in split_choice else 441
+        base_fee = 450
+        add_on = 45
     elif acct_choice == 100000:
-        base_fee = 1100 if "90%" in split_choice else 1000
+        base_fee = 750
+        add_on = 75
+        
+    raw_fee = base_fee + add_on if "90%" in split_choice else base_fee
         
     # Apply Discount
-    final_fee = base_fee * 0.98 if apply_discount else base_fee
+    final_fee = raw_fee * 0.98 if apply_discount else raw_fee
     
     # Display Inputs (ReadOnly for Fee)
     st.metric("Required Fee", f"${final_fee:.2f}")
@@ -93,6 +98,8 @@ with st.sidebar:
     profit_split_pct = 0.90 if "90%" in split_choice else 0.80
     
     st.header("3. Risk Management")
+    st.markdown("<div class='success-box'><b>Note:</b> Since Trailing Drawdown is static while open, we target the full profit in <b>1 Trade</b>.</div>", unsafe_allow_html=True)
+    
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
@@ -129,7 +136,7 @@ def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.
     else:
         cex_size = prop_size / ratio_val
 
-    # FRICTION
+    # FRICTION (Split Commissions)
     prop_fric = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
     cex_fric = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
@@ -164,6 +171,7 @@ t1, t2, t3 = st.tabs(["Phase 1", "Phase 2", "Funded Phase"])
 # === PHASE 1 ===
 with t1:
     st.markdown("<div class='big-header'>Phase 1: One-Shot Pass</div>", unsafe_allow_html=True)
+    st.markdown("<div class='info-box'><b>Goal:</b> Hit 5% target in ONE trade.<br>If trade fails, drain the remaining balance to hit 8% loss and claim refund.</div>", unsafe_allow_html=True)
     
     if st.session_state.phase1_status == "Pending":
         c1, c2, c3 = st.columns(3)
