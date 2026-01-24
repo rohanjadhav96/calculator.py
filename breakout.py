@@ -5,17 +5,19 @@ import math
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Breakout Hedge Commander", layout="wide", page_icon="🛡️")
 
-# --- SESSION STATE ---
+# --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
 if 'phase2_status' not in st.session_state: st.session_state.phase2_status = "Pending"
 if 'risk_preset' not in st.session_state: st.session_state.risk_preset = 4.8
 if 'days_preset' not in st.session_state: st.session_state.days_preset = 0
+if 'funded_ratio' not in st.session_state: st.session_state.funded_ratio = 0.75
 
 # --- STYLING ---
 st.markdown("""
 <style>
     /* Main Layout */
     .big-header { font-size: 24px; font-weight: bold; color: #FFD700; margin-bottom: 15px; }
+    .sub-header { font-size: 18px; font-weight: bold; color: #00BFFF; margin-top: 20px; margin-bottom: 10px; }
     
     /* Result Cards */
     .result-card { background-color: #0e1117; border: 1px solid #333; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
@@ -23,6 +25,7 @@ st.markdown("""
     /* Money Colors */
     .money-pos { color: #00FF7F; font-weight: bold; }
     .money-neg { color: #FF4B4B; font-weight: bold; }
+    .money-neu { color: #aaa; font-weight: bold; }
     
     /* Headers inside cards */
     .pass-header { color: #00FF7F; font-size: 1.4em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
@@ -32,8 +35,9 @@ st.markdown("""
     .money-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
     .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 1px solid #444; font-size: 1.2em; font-weight: bold; }
     
-    /* Solver Box */
+    /* Tools */
     .solver-box { border: 1px solid #00BFFF; background-color: #0a1320; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+    .cycle-box { border: 1px solid #FFD700; background-color: #1a1a0a; padding: 15px; border-radius: 8px; margin-top: 20px; }
     
     /* Info/Warning Boxes */
     .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
@@ -42,8 +46,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander")
-st.caption("Strategic Arbitrage Calculator & Execution Planner")
+st.title("🛡️ Breakout Hedge Commander v27")
+st.caption("The Ultra Suite: Multi-Account Scaling & Cycle Projection")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -64,42 +68,37 @@ with st.sidebar:
     st.markdown("---")
     st.header("2. Account Configuration")
     
+    # MULTI-ACCOUNT SCALER
+    num_accounts = st.number_input("Number of Accounts to Trade", min_value=1, max_value=20, value=1)
+    
     # ACCOUNT SELECTION
     acct_choice = st.selectbox("Select Account Size", [25000, 50000, 100000], index=1)
     split_choice = st.radio("Profit Split", ["90% (Pro)", "80% (Standard)"], horizontal=True)
     apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
     
-    # FEE LOGIC (Updated to User Pricing)
+    # FEE LOGIC
     # 25k: Base 250 | +25 for 90%
     # 50k: Base 450 | +45 for 90%
     # 100k: Base 750 | +75 for 90%
-    
     if acct_choice == 25000:
-        base_fee = 250
-        add_on = 25
+        base_fee = 250; add_on = 25
     elif acct_choice == 50000:
-        base_fee = 450
-        add_on = 45
+        base_fee = 450; add_on = 45
     elif acct_choice == 100000:
-        base_fee = 750
-        add_on = 75
+        base_fee = 750; add_on = 75
         
     raw_fee = base_fee + add_on if "90%" in split_choice else base_fee
-        
-    # Apply Discount
     final_fee = raw_fee * 0.98 if apply_discount else raw_fee
     
-    # Display Inputs (ReadOnly for Fee)
-    st.metric("Required Fee", f"${final_fee:.2f}")
+    st.metric(f"Fee (Per Account)", f"${final_fee:.2f}")
+    if num_accounts > 1:
+        st.metric(f"Total Investment ({num_accounts}x)", f"${final_fee * num_accounts:.2f}")
     
-    # Store for calculations
     acct_size = acct_choice
     fee = final_fee
     profit_split_pct = 0.90 if "90%" in split_choice else 0.80
     
     st.header("3. Risk Management")
-    st.markdown("<div class='success-box'><b>Note:</b> Since Trailing Drawdown is static while open, we target the full profit in <b>1 Trade</b>.</div>", unsafe_allow_html=True)
-    
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
@@ -124,6 +123,42 @@ with st.sidebar:
     if include_swap:
         swap_rate = st.number_input("Swap Rate (%)", 0.03, format="%.4f") / 100
         days_held = st.number_input("Avg Days Held", value=1)
+        
+    st.markdown("---")
+    # DRAWDOWN BUFFER TOOL
+    with st.expander("📉 Drawdown Safety Check"):
+        curr_bal = st.number_input("Current Balance", value=float(acct_size))
+        hwm = st.number_input("High Water Mark", value=float(acct_size))
+        
+        # Drawdown is 8% of Initial Balance, Trailing from HWM? 
+        # Wait, the rule is usually "Max Trailing Drawdown is 8% from HWM" OR "Fixed 8% trailing".
+        # Based on standard 2-step trailing: It trails HWM until it locks at Initial Balance.
+        # Let's assume standard trailing logic for the buffer check.
+        
+        max_loss_allowed = hwm * (1 - max_dd_pct) # Simple proxy for visual
+        # Or usually it's static relative to HWM. 
+        # Let's stick to the prompt: "Trailing Drawdown stays static while trade is open".
+        
+        buffer = curr_bal - (hwm - (acct_size * max_dd_pct)) # Approx logic for trailing from HWM
+        # Actually simplest Breakout logic:
+        # Breach Level = High Water Mark - (Initial Balance * 0.08)
+        breach_level = hwm - (acct_size * max_dd_pct)
+        # But it usually doesn't trail past initial balance?
+        # Let's just calculate distance to 8% from HWM.
+        
+        dist_dollars = curr_bal - breach_level
+        st.write(f"Breach Level: **${breach_level:,.2f}**")
+        st.write(f"Safety Buffer: **${dist_dollars:,.2f}**")
+        if dist_dollars < 0:
+            st.error("BREACHED!")
+        elif dist_dollars < (acct_size * 0.02):
+            st.warning("⚠️ Danger Zone")
+        else:
+            st.success("✅ Safe")
+
+    if st.button("🔄 FULL RESET"):
+        st.session_state.clear()
+        st.rerun()
 
 # --- ENGINE ---
 def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.0):
@@ -136,7 +171,7 @@ def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.
     else:
         cex_size = prop_size / ratio_val
 
-    # FRICTION (Split Commissions)
+    # FRICTION
     prop_fric = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
     cex_fric = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
@@ -171,7 +206,13 @@ t1, t2, t3 = st.tabs(["Phase 1", "Phase 2", "Funded Phase"])
 # === PHASE 1 ===
 with t1:
     st.markdown("<div class='big-header'>Phase 1: One-Shot Pass</div>", unsafe_allow_html=True)
-    st.markdown("<div class='info-box'><b>Goal:</b> Hit 5% target in ONE trade.<br>If trade fails, drain the remaining balance to hit 8% loss and claim refund.</div>", unsafe_allow_html=True)
+    if num_accounts > 1: st.info(f"📊 Displaying totals for {num_accounts} accounts.")
+
+    # Apply Multiplier
+    fee_disp = fee * num_accounts
+    pass_cost_disp = p1['pass_cost'] * num_accounts
+    fail_refund_disp = p1['fail_refund'] * num_accounts
+    sunk_disp = (fee + p1['pass_cost']) * num_accounts
     
     if st.session_state.phase1_status == "Pending":
         c1, c2, c3 = st.columns(3)
@@ -181,32 +222,30 @@ with t1:
         
         col_pass, col_fail = st.columns(2)
         with col_pass:
-            st.info(f"Cost to Pass: -${p1['pass_cost']:,.2f}")
+            st.info(f"Total Cost to Pass: -${pass_cost_disp:,.2f}")
             if st.button("Phase 1 PASSED", key="p1_pass"): st.session_state.phase1_status="Passed"; st.rerun()
         with col_fail:
-            st.error(f"Refund if Fail: +${p1['fail_refund']:,.2f}")
+            st.error(f"Total Refund if Fail: +${fail_refund_disp:,.2f}")
             if st.button("Phase 1 FAILED", key="p1_fail"): st.session_state.phase1_status="Failed"; st.rerun()
-
-        st.caption(f"ℹ️ Refund based on Full {max_dd_pct*100}% Drain.")
 
     elif st.session_state.phase1_status == "Passed":
         html_p1 = f"""
         <div class="result-card" style="border-left: 5px solid #00FF7F;">
-            <div class="pass-header">✅ Phase 1 Passed</div>
-            <div class="money-row"><span>Evaluation Fee:</span><span class="money-neg">-${fee:,.2f}</span></div>
-            <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${p1['pass_cost']:,.2f}</span></div>
-            <div class="total-row"><span>Sunk Cost:</span><span class="money-neg">-${fee + p1['pass_cost']:,.2f}</span></div>
+            <div class="pass-header">✅ Phase 1 Passed ({num_accounts} Accts)</div>
+            <div class="money-row"><span>Total Fees:</span><span class="money-neg">-${fee_disp:,.2f}</span></div>
+            <div class="money-row"><span>Total Hedge Cost:</span><span class="money-neg">-${pass_cost_disp:,.2f}</span></div>
+            <div class="total-row"><span>Total Sunk Cost:</span><span class="money-neg">-${sunk_disp:,.2f}</span></div>
         </div>"""
         st.markdown(html_p1, unsafe_allow_html=True)
         if st.button("Undo Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
 
     elif st.session_state.phase1_status == "Failed":
-        net = p1['fail_refund'] - fee
+        net = fail_refund_disp - fee_disp
         html_fail = f"""
         <div class="result-card" style="border-left: 5px solid #FF4B4B;">
-            <div class="fail-header">❌ Phase 1 Failed</div>
-            <div class="money-row"><span>Refund (Full Drain):</span><span class="money-pos">+${p1['fail_refund']:,.2f}</span></div>
-            <div class="money-row"><span>Fee Paid:</span><span class="money-neg">-${fee:,.2f}</span></div>
+            <div class="fail-header">❌ Phase 1 Failed ({num_accounts} Accts)</div>
+            <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${fail_refund_disp:,.2f}</span></div>
+            <div class="money-row"><span>Total Fees:</span><span class="money-neg">-${fee_disp:,.2f}</span></div>
             <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if net>0 else 'money-neg'}">${net:,.2f}</span></div>
         </div>"""
         st.markdown(html_fail, unsafe_allow_html=True)
@@ -219,33 +258,39 @@ with t2:
     else:
         st.markdown("<div class='big-header'>Phase 2: One-Shot Pass</div>", unsafe_allow_html=True)
         
+        # Apply Multiplier
+        pass_cost_disp = p2['pass_cost'] * num_accounts
+        fail_refund_disp = p2['fail_refund'] * num_accounts
+        prev_sunk_disp = (fee + p1['pass_cost']) * num_accounts
+        
         if st.session_state.phase2_status == "Pending":
             col_pass, col_fail = st.columns(2)
             with col_pass:
-                st.info(f"Cost to Pass: -${p2['pass_cost']:,.2f}")
+                st.info(f"Total Cost to Pass: -${pass_cost_disp:,.2f}")
                 if st.button("Phase 2 PASSED", key="p2_pass"): st.session_state.phase2_status="Passed"; st.rerun()
             with col_fail:
-                st.error(f"Refund if Fail: +${p2['fail_refund']:,.2f}")
+                st.error(f"Total Refund if Fail: +${fail_refund_disp:,.2f}")
                 if st.button("Phase 2 FAILED", key="p2_fail"): st.session_state.phase2_status="Failed"; st.rerun()
 
         elif st.session_state.phase2_status == "Passed":
+            total_inv_disp = total_sunk * num_accounts
             html_p2 = f"""
             <div class="result-card" style="border-left: 5px solid #00FF7F;">
-                <div class="pass-header">🏆 YOU ARE FUNDED!</div>
-                <div class="money-row"><span>Phase 1 Cost:</span><span class="money-neg">-${p1['pass_cost']:,.2f}</span></div>
-                <div class="money-row"><span>Phase 2 Cost:</span><span class="money-neg">-${p2['pass_cost']:,.2f}</span></div>
-                <div class="total-row"><span>TOTAL INVESTMENT:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
+                <div class="pass-header">🏆 YOU ARE FUNDED ({num_accounts} Accts)</div>
+                <div class="money-row"><span>Total Phase 1 Cost:</span><span class="money-neg">-${p1['pass_cost']*num_accounts:,.2f}</span></div>
+                <div class="money-row"><span>Total Phase 2 Cost:</span><span class="money-neg">-${pass_cost_disp:,.2f}</span></div>
+                <div class="total-row"><span>TOTAL INVESTMENT:</span><span class="money-neg">-${total_inv_disp:,.2f}</span></div>
             </div>"""
             st.markdown(html_p2, unsafe_allow_html=True)
             if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
 
         elif st.session_state.phase2_status == "Failed":
-            net = p2['fail_refund'] - (fee + p1['pass_cost'])
+            net = fail_refund_disp - prev_sunk_disp
             html_f2 = f"""
             <div class="result-card" style="border-left: 5px solid #FF4B4B;">
                 <div class="fail-header">❌ Phase 2 Failed</div>
-                <div class="money-row"><span>Refund (Full Drain):</span><span class="money-pos">+${p2['fail_refund']:,.2f}</span></div>
-                <div class="money-row"><span>Sunk Costs:</span><span class="money-neg">-${fee + p1['pass_cost']:,.2f}</span></div>
+                <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${fail_refund_disp:,.2f}</span></div>
+                <div class="money-row"><span>Total Sunk:</span><span class="money-neg">-${prev_sunk_disp:,.2f}</span></div>
                 <div class="total-row"><span>NET RESULT:</span><span class="{'money-pos' if net>0 else 'money-neg'}">${net:,.2f}</span></div>
             </div>"""
             st.markdown(html_f2, unsafe_allow_html=True)
@@ -254,58 +299,96 @@ with t2:
 # === FUNDED ===
 with t3:
     st.markdown("<div class='big-header'>Funded Phase: Sniper Mode</div>", unsafe_allow_html=True)
-    st.markdown(f"**Current Split:** {split_choice}")
+    st.markdown(f"**Accounts Active:** {num_accounts} | **Profit Split:** {split_choice}")
 
-    target_profit_amt = st.number_input("I want to withdraw this amount ($):", value=4000.0, step=100.0)
+    target_profit_amt = st.number_input("I want to withdraw this amount (Per Account) ($):", value=4000.0, step=100.0)
     
-    tool = st.radio("Hedge Strategy:", ["🎚️ Manual Ratio", "🎯 Guaranteed Fail Profit"], horizontal=True)
-    
-    if tool == "🎚️ Manual Ratio":
-        st.info("Use the slider to set your own risk.")
-        f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, 0.75, 0.01)
-    else:
-        st.markdown(f"""
-        <div class="solver-box">
-            <h4 style="color:#00BFFF; margin:0;">🎯 Target: Guaranteed Fail Profit</h4>
-            <p style="color:#ccc; font-size:0.9em;">Total Investment to Recover: <strong>${total_sunk:,.2f}</strong></p>
-        </div>
-        """, unsafe_allow_html=True)
-        target_fail_profit = st.number_input("Desired Profit if Account Blows ($)", 600.0, step=50.0)
-        
-        full_drain_amt = acct_size * max_dd_pct
-        req_win = total_sunk + target_fail_profit
-        f_ratio = req_win / full_drain_amt
-        if f_ratio > 3.0: f_ratio = 3.0
-        st.info(f"💡 Required Ratio: **{f_ratio:.2f}**")
+    # 1. RATIO SELECTOR
+    col_tools, col_ratio = st.columns([1, 2])
+    with col_tools:
+        st.markdown("**Tools:**")
+        if st.button("🧪 Auto-Breakeven Ratio"):
+            # Breakeven = Total_Sunk / (8% Drain)
+            full_drain = acct_size * max_dd_pct
+            safe_ratio = total_sunk / full_drain
+            if safe_ratio > 2.0: safe_ratio = 2.0
+            st.session_state.funded_ratio = safe_ratio
+            st.success(f"Set to {safe_ratio:.2f}")
+            st.rerun()
+            
+    with col_ratio:
+        f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, st.session_state.funded_ratio, 0.01)
+        st.session_state.funded_ratio = f_ratio
 
-    # CALC
+    # CALC PER ACCOUNT
     f_metrics = calculate_metrics(target_profit_amt, 0, is_funded=True, funded_ratio=f_ratio)
     
-    # Use Dynamic Profit Split
-    payout_gross = target_profit_amt * profit_split_pct
-    monthly_net = payout_gross - f_metrics['pass_cost']
-    fail_net = f_metrics['fail_refund'] - total_sunk
+    # TOTALS
+    payout_gross_total = (target_profit_amt * profit_split_pct) * num_accounts
+    pass_cost_total = f_metrics['pass_cost'] * num_accounts
+    monthly_net_total = payout_gross_total - pass_cost_total
     
+    fail_refund_total = f_metrics['fail_refund'] * num_accounts
+    sunk_total = total_sunk * num_accounts
+    fail_net_total = fail_refund_total - sunk_total
+
+    # DISPLAY CARDS
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #00FF7F;">
-            <div class="pass-header">SCENARIO A: SNIPE & WITHDRAW</div>
-            <div class="money-row"><span>Goal:</span><span style="color:white;">${target_profit_amt:,.2f}</span></div>
-            <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_gross:,.2f}</span></div>
-            <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
-            <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if monthly_net>0 else 'money-neg'}">${monthly_net:,.2f}</span></div>
+            <div class="pass-header">SCENARIO A: ALL PASS</div>
+            <div class="money-row"><span>Goal ({num_accounts}x):</span><span style="color:white;">${target_profit_amt*num_accounts:,.2f}</span></div>
+            <div class="money-row"><span>Total Payout:</span><span class="money-pos">+${payout_gross_total:,.2f}</span></div>
+            <div class="money-row"><span>Total Hedge Cost:</span><span class="money-neg">-${pass_cost_total:,.2f}</span></div>
+            <div class="total-row"><span>TOTAL NET PROFIT:</span><span class="{'money-pos' if monthly_net_total>0 else 'money-neg'}">${monthly_net_total:,.2f}</span></div>
         </div>
         """, unsafe_allow_html=True)
     with c2:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #FF4B4B;">
-            <div class="fail-header">SCENARIO B: MISS & BURN</div>
-            <div class="money-row"><span>Refund (8% Drain):</span><span class="money-pos">+${f_metrics['fail_refund']:,.2f}</span></div>
-            <div class="money-row"><span>Sunk Costs:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-            <div class="total-row"><span>EXIT PROFIT:</span><span class="{'money-pos' if fail_net>0 else 'money-neg'}">${fail_net:,.2f}</span></div>
+            <div class="fail-header">SCENARIO B: ALL FAIL</div>
+            <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${fail_refund_total:,.2f}</span></div>
+            <div class="money-row"><span>Total Sunk:</span><span class="money-neg">-${sunk_total:,.2f}</span></div>
+            <div class="total-row"><span>TOTAL EXIT PROFIT:</span><span class="{'money-pos' if fail_net_total>0 else 'money-neg'}">${fail_net_total:,.2f}</span></div>
         </div>
         """, unsafe_allow_html=True)
         
-    if monthly_net < 0:
-        st.error("⚠️ Unprofitable: Hedge Cost > Payout. Lower your ratio.")
+    # --- CYCLE PROJECTOR ---
+    st.markdown("<div class='sub-header'>🔄 Cycle Projector</div>", unsafe_allow_html=True)
+    
+    with st.expander("Run Simulation (Mixed Results)", expanded=True):
+        col_sim1, col_sim2 = st.columns(2)
+        with col_sim1:
+            wins = st.number_input("Accounts Passed (Payout)", min_value=0, max_value=num_accounts, value=int(num_accounts/2))
+        with col_sim2:
+            fails = st.number_input("Accounts Failed (Burn)", min_value=0, max_value=num_accounts, value=int(num_accounts - (num_accounts/2)))
+            
+        if wins + fails != num_accounts:
+            st.warning(f"Note: {wins} + {fails} does not equal your total {num_accounts} accounts.")
+            
+        # Calc Mixed
+        profit_from_wins = (target_profit_amt * profit_split_pct - f_metrics['pass_cost']) * wins
+        profit_from_fails = (f_metrics['fail_refund'] - total_sunk) * fails
+        
+        # Sunk cost of winners is already factored into "Net Monthly" in previous logic? 
+        # Wait, "Monthly Net" above = Payout - Hedge Cost. It does NOT subtract the original fee/eval cost.
+        # To be accurate for "Cycle Profit", we must subtract Sunk Cost from winners too.
+        
+        # Correct Net Logic:
+        # Winner = (Payout - HedgeCost) - SunkCost
+        # Loser = (Refund) - SunkCost
+        
+        net_per_winner = (target_profit_amt * profit_split_pct) - f_metrics['pass_cost'] - total_sunk
+        net_per_loser = f_metrics['fail_refund'] - total_sunk
+        
+        sim_total = (net_per_winner * wins) + (net_per_loser * fails)
+        
+        st.markdown(f"""
+        <div class="cycle-box">
+            <div class="money-row"><span>Profit from {wins} Winners:</span><span class="money-pos">${net_per_winner * wins:,.2f}</span></div>
+            <div class="money-row"><span>Profit from {fails} Losers:</span><span class="{'money-pos' if net_per_loser>0 else 'money-neg'}">${net_per_loser * fails:,.2f}</span></div>
+            <div style="border-top:1px solid #444; margin:10px 0;"></div>
+            <h3 style="text-align:center; color:{'#00FF7F' if sim_total>0 else '#FF4B4B'};">PROJECTED TOTAL: ${sim_total:,.2f}</h3>
+        </div>
+        """, unsafe_allow_html=True)
