@@ -41,8 +41,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v24")
-st.caption("Updated: One-Shot Pass + Full 8% Drain Capability")
+st.title("🛡️ Breakout Hedge Commander v25")
+st.caption("Updated: Multi-Account Sizes + Profit Split Logic")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -50,24 +50,49 @@ with st.sidebar:
     st.markdown("""
     <div class='info-box'>
     <b>Strategy: One-Shot</b><br>
-    We risk ~4.8% to pass in 1 trade.<br>
-    If we fail, we drain the FULL 8% to maximize refund.
+    Risk ~4.8% to pass in 1 trade.<br>
+    Fail drains FULL 8% for max refund.
     </div>
     """, unsafe_allow_html=True)
     
-    if st.button("⚡ RESET TO ONE-SHOT DEFAULTS"):
+    if st.button("⚡ RESET DEFAULTS"):
         st.session_state.risk_preset = 4.8
         st.session_state.days_preset = 0 
         st.rerun()
 
     st.markdown("---")
-    st.header("2. Account Rules")
-    acct_size = st.number_input("Account Size ($)", 50000, step=10000)
-    fee = st.number_input("Signup Fee ($)", 450)
+    st.header("2. Account Configuration")
+    
+    # ACCOUNT SELECTION
+    acct_choice = st.selectbox("Select Account Size", [25000, 50000, 100000], index=1)
+    split_choice = st.radio("Profit Split", ["90% (Pro)", "80% (Standard)"], horizontal=True)
+    apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
+    
+    # FEE LOGIC
+    # 25k: 80%=$275, 90%=$302
+    # 50k: 80%=$441, 90%=$486 (Derived from prompt: 90% is 486, split cost is 45)
+    # 100k: 80%=$1000, 90%=$1100
+    
+    base_fee = 0
+    if acct_choice == 25000:
+        base_fee = 302 if "90%" in split_choice else 275
+    elif acct_choice == 50000:
+        base_fee = 486 if "90%" in split_choice else 441
+    elif acct_choice == 100000:
+        base_fee = 1100 if "90%" in split_choice else 1000
+        
+    # Apply Discount
+    final_fee = base_fee * 0.98 if apply_discount else base_fee
+    
+    # Display Inputs (ReadOnly for Fee)
+    st.metric("Required Fee", f"${final_fee:.2f}")
+    
+    # Store for calculations
+    acct_size = acct_choice
+    fee = final_fee
+    profit_split_pct = 0.90 if "90%" in split_choice else 0.80
     
     st.header("3. Risk Management")
-    st.markdown("<div class='success-box'><b>Note:</b> Since Trailing Drawdown is static while open, we can safely target +5% in one trade.</div>", unsafe_allow_html=True)
-    
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
@@ -108,7 +133,7 @@ def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.
     prop_fric = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
     cex_fric = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
-    # PASS LOGIC (Cost to hit target)
+    # PASS LOGIC
     prop_gross = target_profit + prop_fric
     if is_funded:
         cex_loss_pass = (prop_gross * funded_ratio) + cex_fric
@@ -116,13 +141,7 @@ def calculate_metrics(target_profit, ratio_val, is_funded=False, funded_ratio=0.
         cex_loss_pass = (prop_gross / ratio_val) + cex_fric
 
     # FAIL LOGIC (Full 8% Drain)
-    # Even if we only risk 4.8% on the main trade, if we fail, we assume
-    # we drain the remaining balance to extract max value from CEX.
     total_drain = acct_size * max_dd_pct
-    
-    # We need to estimate friction for draining the WHOLE account.
-    # Friction scales with size.
-    # Drain Multiplier = 8% / Risk% (e.g. 1.6 trades worth of volume)
     volume_multiplier = max_dd_pct / risk_per_trade_pct
     
     if is_funded:
@@ -152,9 +171,6 @@ with t1:
         c2.metric("CEX Size", f"${p1['cex_size']:,.0f}")
         c3.metric("One-Shot Risk", f"${acct_size*risk_per_trade_pct:,.0f}")
         
-        # SAFETY CHECK
-        net_profit_fail = p1['fail_refund'] - fee
-        
         col_pass, col_fail = st.columns(2)
         with col_pass:
             st.info(f"Cost to Pass: -${p1['pass_cost']:,.2f}")
@@ -163,7 +179,7 @@ with t1:
             st.error(f"Refund if Fail: +${p1['fail_refund']:,.2f}")
             if st.button("Phase 1 FAILED", key="p1_fail"): st.session_state.phase1_status="Failed"; st.rerun()
 
-        st.caption(f"ℹ️ Refund Calculation assumes you drain the full {max_dd_pct*100}% drawdown limit.")
+        st.caption(f"ℹ️ Refund based on Full {max_dd_pct*100}% Drain.")
 
     elif st.session_state.phase1_status == "Passed":
         html_p1 = f"""
@@ -230,10 +246,10 @@ with t2:
 # === FUNDED ===
 with t3:
     st.markdown("<div class='big-header'>Funded Phase: Sniper Mode</div>", unsafe_allow_html=True)
+    st.markdown(f"**Current Split:** {split_choice}")
 
-    target_profit_amt = st.number_input("I want to withdraw this amount ($):", value=2000.0, step=100.0)
+    target_profit_amt = st.number_input("I want to withdraw this amount ($):", value=4000.0, step=100.0)
     
-    # TOOL SELECTION
     tool = st.radio("Hedge Strategy:", ["🎚️ Manual Ratio", "🎯 Guaranteed Fail Profit"], horizontal=True)
     
     if tool == "🎚️ Manual Ratio":
@@ -248,20 +264,17 @@ with t3:
         """, unsafe_allow_html=True)
         target_fail_profit = st.number_input("Desired Profit if Account Blows ($)", 600.0, step=50.0)
         
-        # Solver Logic: CEX Win = Sunk + Desired
-        # CEX Win = Full Drain (8%) * Ratio
-        # Ratio = (Sunk + Desired) / (Account * 8%)
         full_drain_amt = acct_size * max_dd_pct
         req_win = total_sunk + target_fail_profit
         f_ratio = req_win / full_drain_amt
-        
         if f_ratio > 3.0: f_ratio = 3.0
-        st.info(f"💡 Required Ratio: **{f_ratio:.2f}** (Calculated based on Full {max_dd_pct*100}% Drain)")
+        st.info(f"💡 Required Ratio: **{f_ratio:.2f}**")
 
     # CALC
     f_metrics = calculate_metrics(target_profit_amt, 0, is_funded=True, funded_ratio=f_ratio)
     
-    payout_gross = target_profit_amt * 0.90
+    # Use Dynamic Profit Split
+    payout_gross = target_profit_amt * profit_split_pct
     monthly_net = payout_gross - f_metrics['pass_cost']
     fail_net = f_metrics['fail_refund'] - total_sunk
     
@@ -271,7 +284,7 @@ with t3:
         <div class="result-card" style="border: 1px solid #00FF7F;">
             <div class="pass-header">SCENARIO A: SNIPE & WITHDRAW</div>
             <div class="money-row"><span>Goal:</span><span style="color:white;">${target_profit_amt:,.2f}</span></div>
-            <div class="money-row"><span>Payout (90%):</span><span class="money-pos">+${payout_gross:,.2f}</span></div>
+            <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_gross:,.2f}</span></div>
             <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
             <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if monthly_net>0 else 'money-neg'}">${monthly_net:,.2f}</span></div>
         </div>
