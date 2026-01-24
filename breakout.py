@@ -24,7 +24,6 @@ st.markdown("""
     .money-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
     .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 1px solid #444; font-size: 1.2em; font-weight: bold; }
     .solver-box { border: 1px solid #00BFFF; background-color: #0a1320; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
-    .cycle-box { border: 1px solid #FFD700; background-color: #1a1a0a; padding: 15px; border-radius: 8px; margin-top: 20px; }
     .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
     .warning-box { background-color: #2e0b0b; padding: 10px; border-left: 3px solid #FF4B4B; font-size: 0.9em; color: #ffcccc; margin-bottom: 15px; }
     .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
@@ -61,7 +60,7 @@ with st.sidebar:
     split_choice = st.radio("Profit Split", ["90% (Pro)", "80% (Standard)"], horizontal=True)
     apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
     
-    # CORRECTED FEE LOGIC
+    # FEE LOGIC
     # 25k: Base 250 | +25 for 90%
     # 50k: Base 450 | +45 for 90%
     # 100k: Base 750 | +75 for 90%
@@ -258,27 +257,24 @@ with t3:
 
     target_profit_amt = st.number_input("Target Withdrawal Amount (Per Account):", value=4000.0, step=100.0)
     
-    tool = st.radio("Hedge Strategy:", ["🎚️ Manual Ratio", "🎯 Guaranteed Fail Profit"], horizontal=True)
-    
-    if tool == "🎚️ Manual Ratio":
-        st.info("Use the slider to set your own risk.")
-        f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, 0.75, 0.01)
-    else:
-        st.markdown(f"""
-        <div class="solver-box">
-            <h4 style="color:#00BFFF; margin:0;">🎯 Target: Guaranteed Fail Profit</h4>
-            <p style="color:#ccc; font-size:0.9em;">Total Investment to Recover: <strong>${total_sunk:,.2f}</strong></p>
-        </div>
-        """, unsafe_allow_html=True)
-        target_fail_profit = st.number_input("Desired Profit if Account Blows ($)", 600.0, step=50.0)
-        
-        full_drain_amt = acct_size * max_dd_pct
-        req_win = total_sunk + target_fail_profit
-        f_ratio = req_win / full_drain_amt
-        if f_ratio > 3.0: f_ratio = 3.0
-        st.info(f"💡 Required Ratio: **{f_ratio:.2f}**")
+    # 1. RATIO SELECTOR
+    col_tools, col_ratio = st.columns([1, 2])
+    with col_tools:
+        st.markdown("**Tools:**")
+        if st.button("🧪 Auto-Breakeven Ratio"):
+            full_drain = acct_size * max_dd_pct
+            safe_ratio = total_sunk / full_drain
+            if safe_ratio > 2.0: safe_ratio = 2.0
+            st.session_state.funded_ratio = safe_ratio
+            st.success(f"Set to {safe_ratio:.2f}")
+            st.rerun()
+            
+    with col_ratio:
+        if 'funded_ratio' not in st.session_state: st.session_state.funded_ratio = 0.75
+        f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, st.session_state.funded_ratio, 0.01)
+        st.session_state.funded_ratio = f_ratio
 
-    # CALC
+    # CALC PER ACCOUNT
     f_metrics = calculate_metrics(target_profit_amt, 0, is_funded=True, funded_ratio=f_ratio)
     
     # Per Account
@@ -311,34 +307,3 @@ with t3:
             <div class="total-row"><span>EXIT PROFIT:</span><span class="{'money-pos' if fail_net_total>0 else 'money-neg'}">${fail_net_total:,.2f}</span></div>
         </div>
         """, unsafe_allow_html=True)
-        
-    # --- CYCLE PROJECTOR (Decoupled) ---
-    st.markdown("<div class='sub-header'>🔄 Cycle Projector (Simulation)</div>", unsafe_allow_html=True)
-    
-    with st.expander("Run Future Simulations (What If?)", expanded=True):
-        st.caption("Simulate any number of accounts regardless of your active setup.")
-        col_sim1, col_sim2 = st.columns(2)
-        with col_sim1:
-            sim_wins = st.number_input("Simulated Wins", min_value=0, max_value=1000, value=5)
-        with col_sim2:
-            sim_fails = st.number_input("Simulated Fails", min_value=0, max_value=1000, value=5)
-            
-        # Calculation (Correct Net Logic: Win needs to subtract Sunk Cost too to be 'True Net')
-        # Scenario A Card above shows Net Monthly (Payout - Hedge). It does NOT subtract Sunk Cost (Fee+Eval).
-        # To find True Life Cycle Profit per Win, we must subtract Sunk Cost.
-        
-        true_profit_per_win = net_win_one - total_sunk
-        true_profit_per_fail = net_fail_one # Already subtracts sunk cost in calculation above
-        
-        sim_total = (true_profit_per_win * sim_wins) + (true_profit_per_fail * sim_fails)
-        
-        st.markdown(f"""
-        <div class="cycle-box">
-            <div class="money-row"><span>Profit from {sim_wins} Winners:</span><span class="money-pos">${true_profit_per_win * sim_wins:,.2f}</span></div>
-            <div class="money-row"><span>Profit from {sim_fails} Losers:</span><span class="{'money-pos' if true_profit_per_fail>0 else 'money-neg'}">${true_profit_per_fail * sim_fails:,.2f}</span></div>
-            <div style="border-top:1px solid #444; margin:10px 0;"></div>
-            <h3 style="text-align:center; color:{'#00FF7F' if sim_total>0 else '#FF4B4B'};">PROJECTED TOTAL: ${sim_total:,.2f}</h3>
-            <p style="text-align:center; font-size:0.8em; color:#888;">(Calculates full lifecycle: Fees + Eval Costs + Payouts + Refunds)</p>
-        </div>
-        """, unsafe_allow_html=True)
-
