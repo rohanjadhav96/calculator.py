@@ -34,7 +34,7 @@ st.markdown("""
     /* Solver Box */
     .solver-box { border: 1px solid #00BFFF; background-color: #0a1320; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
     
-    /* Info Box (Side Notes) */
+    /* Info Box */
     .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
@@ -45,12 +45,18 @@ st.caption("Strategic Arbitrage Calculator & Execution Planner")
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("1. Strategy Presets")
-    st.markdown("<div class='info-box'><b>Preset Guide:</b><br>• <b>SAFE:</b> Risks 2% per trade. Takes 3 days. Good for beginners.<br>• <b>SPEED:</b> Risks 4.8% per trade. Takes 1 day. High speed/turnover.</div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class='info-box'>
+    <b>Preset Guide:</b><br>
+    • <b>SAFE:</b> Risks 4% per trade. Takes 2 days. Balanced safety.<br>
+    • <b>SPEED:</b> Risks 4.8% per trade. Takes 1 day. Max aggression.
+    </div>
+    """, unsafe_allow_html=True)
     
     c1, c2 = st.columns(2)
     if c1.button("🛡️ SAFE MODE"):
-        st.session_state.risk_preset = 2.0
-        st.session_state.days_preset = 3
+        st.session_state.risk_preset = 4.0
+        st.session_state.days_preset = 2
         st.rerun()
     if c2.button("⚡ SPEEDRUN"):
         st.session_state.risk_preset = 4.8
@@ -63,7 +69,7 @@ with st.sidebar:
     fee = st.number_input("Signup Fee ($)", 450)
     
     st.header("3. Risk Management")
-    st.markdown("<div class='info-box'><b>Risk Per Trade:</b> Set this below 5% to avoid hitting the Daily Limit in one bad tick. 4.0% - 4.8% is ideal for speed.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='info-box'><b>Risk Per Trade:</b> Set this below 5% to avoid hitting the Daily Limit.</div>", unsafe_allow_html=True)
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
     risk_per_trade_pct = st.number_input("RISK PER TRADE (%)", value=st.session_state.risk_preset, step=0.1, format="%.1f") / 100
