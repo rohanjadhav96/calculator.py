@@ -1,176 +1,283 @@
 import streamlit as st
 import pandas as pd
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Pro (Strict Math)", layout="wide", page_icon="🧮")
+# --- APP CONFIGURATION ---
+st.set_page_config(page_title="Breakout Hedge Commander v3.0", layout="wide", page_icon="🛡️")
 
-# Custom Styling
+# --- SESSION STATE INITIALIZATION ---
+# This allows the app to remember where you are in the process
+if 'phase1_status' not in st.session_state:
+    st.session_state.phase1_status = "Pending" # Pending, Passed, Failed
+if 'phase2_status' not in st.session_state:
+    st.session_state.phase2_status = "Pending"
+if 'current_step' not in st.session_state:
+    st.session_state.current_step = 1
+
+# --- STYLING ---
 st.markdown("""
 <style>
-    .metric-card { background-color: #1E1E1E; padding: 15px; border-radius: 8px; border: 1px solid #333; }
-    .profit-text { color: #00FF7F; font-weight: bold; }
-    .loss-text { color: #FF4B4B; font-weight: bold; }
-    .warning-text { color: #FFA500; font-weight: bold; }
+    .big-header { font-size: 24px; font-weight: bold; color: #4CAF50; margin-bottom: 10px; }
+    .warning-box { background-color: #332b00; border-left: 5px solid #ffcc00; padding: 15px; border-radius: 5px; }
+    .fail-box { background-color: #330000; border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; }
+    .pass-box { background-color: #002200; border-left: 5px solid #00ff00; padding: 15px; border-radius: 5px; }
+    .metric-container { background-color: #1E1E1E; padding: 10px; border-radius: 8px; border: 1px solid #333; text-align: center; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 50px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🧮 Breakout Hedge Pro: The 'True Cost' Calculator")
-st.markdown("This tool includes **Commissions, Slippage, and Swaps** to match the Python script logic exactly.")
+st.title("🛡️ Breakout Hedge Commander v3.0")
+st.markdown("**Interactive Execution Protocol with 'True Cost' Accounting**")
 
 # --- SIDEBAR: INPUTS ---
 with st.sidebar:
-    st.header("1. Account & Rules")
+    st.header("⚙️ 1. Account Config")
     acct_size = st.number_input("Account Size ($)", 50000, step=10000)
-    fee = st.number_input("Evaluation Fee ($)", 450)
-    leverage = st.number_input("Max Leverage Allowed", 5, help="Breakout BTC/ETH is usually 5:1")
-    daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0) / 100
+    fee = st.number_input("Signup Fee ($)", 450)
     
-    st.header("2. Market Conditions")
-    # Matches screenshot logic: commission = 0.0004 (0.04%)
-    comm_rate = st.number_input("Commission Rate (%)", 0.04, step=0.01, format="%.4f") / 100
-    slippage_pct = st.number_input("Est. Slippage (%)", 0.05, step=0.01) / 100
-    spread_pct = st.number_input("Spread (%)", 0.02, step=0.01) / 100
-    
-    st.header("3. Holding Costs")
-    funding_rate_8h = st.number_input("Funding Rate (per 8h %)", 0.01, format="%.4f") / 100
-    days_held = st.number_input("Days to Hit Target", 2, step=1)
-    
-    st.header("4. Ratios (Prop:CEX)")
-    ratio_p1 = st.number_input("Phase 1 Ratio", 5.8, step=0.1)
+    st.header("⚖️ 2. Strategy Ratios")
+    ratio_p1 = st.number_input("Phase 1 Ratio (Prop:CEX)", 5.8, step=0.1, help="Higher = Cheaper hedge, but riskier refund.")
     ratio_p2 = st.number_input("Phase 2 Ratio", 3.2, step=0.1)
+    ratio_funded = st.number_input("Funded Ratio", 0.75, step=0.05)
+    
+    st.header("📉 3. Risk & Friction")
+    daily_dd_pct = st.number_input("Daily Drawdown Limit (%)", 5.0, help="Breakout is usually 5% daily.") / 100
+    slippage_buffer = st.number_input("Safety Buffer (%)", 0.5, help="Reduces trade size to prevent daily breach.") / 100
+    comm_rate = st.number_input("Commission (%)", 0.04, format="%.4f") / 100
+    swap_rate = st.number_input("Daily Swap/Funding (%)", 0.03, format="%.4f") / 100
+    days_held = st.number_input("Est. Days to Pass", 2)
 
-# --- CALCULATOR FUNCTIONS ---
-
-def calculate_true_cost(target_net_profit, ratio, max_loss_limit):
-    """
-    Reverse engineers the trade to find out how much we actually need to Gross
-    to net the target after paying commissions and slippage.
-    """
-    # 1. We need to find the required Position Size first.
-    # Logic: To be safe, we base Position Size on the MAX LOSS LIMIT (Daily Limit).
-    # If price moves X% against us, we must not lose more than Max Loss.
-    # Let's assume a Stop Loss distance of 4% (leaving 1% buffer for daily limit) for safety.
-    stop_loss_dist = 0.04 
+# --- BACKEND CALCULATION ENGINE ---
+def calculate_metrics(target_profit, ratio, is_funded=False):
+    # 1. Safe Risk Limit (Daily DD - Buffer)
+    safe_risk_usd = acct_size * (daily_dd_pct - slippage_buffer)
     
-    # Notional Position Size = Max_Risk / Stop_Loss_Dist
-    # However, user wants "Max Size Possible".
-    # Max Size by Leverage = Account * Leverage
-    max_size_lev = acct_size * leverage
+    # 2. Position Sizing (Derived from Safe Risk)
+    # We assume a standard stop loss distance (e.g. 1%) to calculate leverage/size
+    # If SL is 1%, Size = Risk / 0.01
+    sl_distance = 0.01 
+    prop_size_notional = safe_risk_usd / sl_distance
+    cex_size_notional = prop_size_notional / ratio
     
-    # Max Size by Daily Limit (Assuming 1% bad wick/slippage on a 5% limit) is safer
-    # But to match "Max Size" request, we use Leverage limit, but warn about risk.
-    pos_size_prop = max_size_lev 
+    # 3. True Cost Calculation (Friction)
+    # How much extra do we need to win on Prop to cover fees?
+    prop_friction = (prop_size_notional * comm_rate * 2) + (prop_size_notional * swap_rate * days_held)
+    cex_friction = (cex_size_notional * comm_rate * 2) + (cex_size_notional * swap_rate * days_held)
     
-    # 2. Calculate Costs on Prop Side
-    prop_comm_cost = pos_size_prop * comm_rate
-    prop_slippage_cost = pos_size_prop * slippage_pct
-    prop_spread_cost = pos_size_prop * spread_pct
-    prop_swap_cost = pos_size_prop * funding_rate_8h * 3 * days_held # 3 intervals per day
+    # 4. Gross Targets
+    # To NET the target profit, Prop must Gross: Target + Prop Friction
+    required_prop_gross = target_profit + prop_friction
     
-    total_prop_friction = prop_comm_cost + prop_slippage_cost + prop_spread_cost + prop_swap_cost
+    # 5. CEX Impact
+    # If Prop wins (Pass): CEX loses (Gross Win / Ratio) + CEX Friction
+    cex_loss_if_pass = (required_prop_gross / ratio) + cex_friction
     
-    # 3. To Net $2500, we need to Gross ($2500 + Friction)
-    required_gross_win = target_net_profit + total_prop_friction
-    
-    # 4. Calculate CEX Side
-    pos_size_cex = pos_size_prop / ratio
-    cex_comm_cost = pos_size_cex * comm_rate # Assuming similar fees on CEX
-    cex_swap_cost = pos_size_cex * funding_rate_8h * 3 * days_held
-    
-    # The CEX Loss is the Gross Win divided by Ratio
-    cex_trading_loss = required_gross_win / ratio
-    
-    # Total Cost to Pass = CEX Loss + CEX Fees
-    total_cost_cex = cex_trading_loss + cex_comm_cost + cex_swap_cost
+    # If Prop fails (Fail): CEX wins (Risk / Ratio) - CEX Friction
+    cex_win_if_fail = (safe_risk_usd / ratio) - cex_friction
     
     return {
-        "prop_size": pos_size_prop,
-        "cex_size": pos_size_cex,
-        "prop_friction": total_prop_friction,
-        "cex_loss_total": total_cost_cex,
-        "gross_needed": required_gross_win
+        "prop_size": prop_size_notional,
+        "cex_size": cex_size_notional,
+        "cex_loss_pass": cex_loss_if_pass,
+        "cex_win_fail": cex_win_if_fail,
+        "safe_risk": safe_risk_usd,
+        "prop_friction": prop_friction
     }
 
-# --- PERFORM CALCULATIONS ---
+# Run Calcs
+p1 = calculate_metrics(acct_size * 0.05, ratio_p1)
+p2 = calculate_metrics(acct_size * 0.10, ratio_p2)
+funded = calculate_metrics(acct_size * 0.05, ratio_funded, is_funded=True) # 5% profit target for funded
 
-# Phase 1
-p1_target = acct_size * 0.05
-p1_data = calculate_true_cost(p1_target, ratio_p1, acct_size * daily_dd_pct)
+# --- MAIN INTERFACE ---
 
-# Phase 2
-p2_target = acct_size * 0.10
-p2_data = calculate_true_cost(p2_target, ratio_p2, acct_size * daily_dd_pct)
+# PROGRESS BAR
+progress = 0
+if st.session_state.phase1_status == "Passed": progress = 50
+if st.session_state.phase2_status == "Passed": progress = 100
+st.progress(progress)
 
-# Total
-total_sunk = p1_data['cex_loss_total'] + p2_data['cex_loss_total'] + fee
+# TABS (Controlled by Session State)
+tab1, tab2, tab3 = st.tabs(["1️⃣ PHASE 1 (Eval)", "2️⃣ PHASE 2 (Verify)", "3️⃣ FUNDED (Harvest)"])
 
-# --- DISPLAY ---
-
-st.header("📊 Detailed Execution Plan (True Cost)")
-
-# Warning about Max Size
-if p1_data['prop_size'] > (acct_size * daily_dd_pct) / 0.01:
-    st.error(f"⚠️ **CRITICAL WARNING:** You requested 'Max Size' (${p1_data['prop_size']:,.0f}). This size is dangerously high. A 1% move against you will breach the Daily Drawdown. Recommended size: < ${(acct_size*daily_dd_pct)/0.02:,.0f}.")
-
-# TABS
-tab1, tab2, tab3 = st.tabs(["Phase 1 Checklist", "Phase 2 Checklist", "Financial Breakdown"])
-
+# ================= PHASE 1 =================
 with tab1:
-    st.subheader("Phase 1: The Filter")
-    c1, c2 = st.columns(2)
+    st.markdown("<div class='big-header'>Phase 1: The Filter</div>", unsafe_allow_html=True)
+    
+    # 1. SETUP SECTION
+    c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(f"""
-        ### 🟢 Prop Account Setup
-        * **Position Size (Notional):** `${p1_data['prop_size']:,.0f}`
-        * **Leverage Used:** {leverage}x
-        * **Target Net Profit:** ${p1_target:,.0f}
-        * **Actual Gross Target:** `${p1_data['gross_needed']:,.2f}`
-        * *(You need extra profit to cover ${p1_data['prop_friction']:,.2f} in fees/swaps)*
-        """)
+        st.info("🎯 **Target: Reach +5%**")
+        st.write(f"Net Profit Needed: **${acct_size*0.05:,.0f}**")
+        st.caption(f"Est. Friction/Fees: -${p1['prop_friction']:,.2f}")
     with c2:
-        st.markdown(f"""
-        ### 🔴 CEX Account Setup
-        * **Position Size (Notional):** `${p1_data['cex_size']:,.0f}`
-        * **Direction:** Opposite to Prop
-        * **Expected Loss:** `${p1_data['cex_loss_total']:,.2f}`
-        """)
+        st.warning(f"🛑 **Max Risk: -${p1['safe_risk']:,.0f}**")
+        st.write(f"Based on {daily_dd_pct*100}% Daily Limit")
+        st.caption(f"Includes {slippage_buffer*100}% Buffer")
+    with c3:
+        st.error("**Hedge Ratio: " + str(ratio_p1) + "**")
+        st.write(f"Prop Size: **${p1['prop_size']:,.0f}**")
+        st.write(f"CEX Size: **${p1['cex_size']:,.0f}**")
 
     st.markdown("---")
-    outcome = st.selectbox("Phase 1 Result?", ["Select...", "Pass", "Fail"], key="o1")
-    if outcome == "Pass":
-        st.success(f"Move to Phase 2. Cost incurred: ${p1_data['cex_loss_total']:,.2f}")
-    elif outcome == "Fail":
-        refund = (acct_size * 0.08) / ratio_p1 # Approx win
-        st.error(f"Account Failed. Refund calculated: +${refund:,.2f}. Net: {refund - fee - p1_data['cex_loss_total']}")
+    
+    # 2. CHECKLIST
+    st.subheader("✅ Execution Checklist")
+    chk1 = st.checkbox("1. I have deposited funds into CEX.", key="p1_c1")
+    chk2 = st.checkbox(f"2. I have calculated Lot Size for ${p1['prop_size']:,.0f} (Prop) and ${p1['cex_size']:,.0f} (CEX).", key="p1_c2")
+    chk3 = st.checkbox("3. I have opened BOTH trades simultaneously.", key="p1_c3")
+    
+    if chk1 and chk2 and chk3:
+        st.markdown("### 🎱 Report Outcome")
+        col_pass, col_fail = st.columns(2)
+        
+        with col_pass:
+            if st.button("✅ Phase 1 PASSED"):
+                st.session_state.phase1_status = "Passed"
+                st.rerun()
+        
+        with col_fail:
+            if st.button("❌ Phase 1 FAILED (Hit Stop)"):
+                st.session_state.phase1_status = "Failed"
+                st.rerun()
 
+    # 3. RESULT DISPLAY
+    if st.session_state.phase1_status == "Passed":
+        st.markdown(f"""
+        <div class='pass-box'>
+            <h3>🎉 Phase 1 Complete</h3>
+            <p>You paid <b>${p1['cex_loss_pass']:,.2f}</b> on CEX to pass Phase 1.</p>
+            <p><strong>Status:</strong> Unlocking Phase 2...</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    elif st.session_state.phase1_status == "Failed":
+        refund = p1['cex_win_fail']
+        net = refund - fee
+        color = "green" if net > 0 else "red"
+        st.markdown(f"""
+        <div class='fail-box'>
+            <h3>💀 Phase 1 Failed</h3>
+            <p>Prop Account Blown (Hit Daily Limit).</p>
+            <p>CEX Profit: <b>+${refund:,.2f}</b></p>
+            <p>Evaluation Fee: <b>-${fee:,.2f}</b></p>
+            <hr>
+            <h2 style='color:{color}'>Net Result: ${net:,.2f}</h2>
+            <p><em>Check your bankroll. If positive, you made money failing. Buy a new account.</em></p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🔄 Reset / Try Again"):
+            st.session_state.phase1_status = "Pending"
+            st.session_state.phase2_status = "Pending"
+            st.rerun()
+
+# ================= PHASE 2 =================
 with tab2:
-    st.subheader("Phase 2: Verification")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(f"""
-        ### 🟢 Prop Account Setup
-        * **Position Size:** `${p2_data['prop_size']:,.0f}`
-        * **Target Net Profit:** ${p2_target:,.0f}
-        * **Actual Gross Target:** `${p2_data['gross_needed']:,.2f}`
-        """)
-    with c2:
-        st.markdown(f"""
-        ### 🔴 CEX Account Setup
-        * **Position Size:** `${p2_data['cex_size']:,.0f}`
-        * **Expected Loss:** `${p2_data['cex_loss_total']:,.2f}`
-        """)
+    if st.session_state.phase1_status != "Passed":
+        st.markdown("### 🔒 Locked")
+        st.warning("Please complete Phase 1 successfully to unlock this step.")
+    else:
+        st.markdown("<div class='big-header'>Phase 2: Verification</div>", unsafe_allow_html=True)
+        
+        # 1. SETUP
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.info("🎯 **Target: Reach +10%**")
+            st.write(f"Net Profit Needed: **${acct_size*0.10:,.0f}**")
+        with c2:
+            st.warning(f"🛑 **Max Risk: -${p2['safe_risk']:,.0f}**")
+        with c3:
+            st.error("**Hedge Ratio: " + str(ratio_p2) + "**")
+            st.write(f"Prop Size: **${p2['prop_size']:,.0f}**")
+            st.write(f"CEX Size: **${p2['cex_size']:,.0f}**")
 
+        st.markdown("---")
+        
+        # 2. CHECKLIST
+        st.subheader("✅ Execution Checklist")
+        chk_p2_1 = st.checkbox("1. I have adjusted CEX leverage for new ratio.", key="p2_c1")
+        chk_p2_2 = st.checkbox(f"2. I have opened Prop Long (${p2['prop_size']:,.0f}) and CEX Short (${p2['cex_size']:,.0f}).", key="p2_c2")
+        
+        if chk_p2_1 and chk_p2_2:
+            st.markdown("### 🎱 Report Outcome")
+            col_pass_2, col_fail_2 = st.columns(2)
+            
+            with col_pass_2:
+                if st.button("✅ Phase 2 PASSED"):
+                    st.session_state.phase2_status = "Passed"
+                    st.rerun()
+            
+            with col_fail_2:
+                if st.button("❌ Phase 2 FAILED"):
+                    st.session_state.phase2_status = "Failed"
+                    st.rerun()
+
+        # 3. RESULT DISPLAY
+        if st.session_state.phase2_status == "Passed":
+            total_sunk = fee + p1['cex_loss_pass'] + p2['cex_loss_pass']
+            st.markdown(f"""
+            <div class='pass-box'>
+                <h3>🏆 YOU ARE FUNDED!</h3>
+                <p>Phase 2 Cost: <b>${p2['cex_loss_pass']:,.2f}</b></p>
+                <hr>
+                <h4>💰 Total Investment: ${total_sunk:,.2f}</h4>
+                <p>This is the amount you need to recover in Phase 3.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        elif st.session_state.phase2_status == "Failed":
+            refund_p2 = p2['cex_win_fail']
+            sunk_p1 = fee + p1['cex_loss_pass']
+            net_p2 = refund_p2 - sunk_p1
+            st.markdown(f"""
+            <div class='fail-box'>
+                <h3>💀 Phase 2 Failed</h3>
+                <p>CEX Profit: <b>+${refund_p2:,.2f}</b></p>
+                <p>Sunk Costs (Fee + P1): <b>-${sunk_p1:,.2f}</b></p>
+                <hr>
+                <h2 style='color:red'>Net Loss: ${net_p2:,.2f}</h2>
+                <p>You recovered some capital, but not all. Restart.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("🔄 Reset"):
+                st.session_state.phase1_status = "Pending"
+                st.session_state.phase2_status = "Pending"
+                st.rerun()
+
+# ================= PHASE 3 =================
 with tab3:
-    st.subheader("💰 The Real Numbers")
-    
-    df = pd.DataFrame({
-        "Item": ["Evaluation Fee", "Phase 1 Cost (Hedge+Fees)", "Phase 2 Cost (Hedge+Fees)", "Total Investment"],
-        "Amount": [fee, p1_data['cex_loss_total'], p2_data['cex_loss_total'], total_sunk]
-    })
-    st.table(df)
-    
-    st.markdown(f"### 💡 ROI Analysis")
-    payout = (acct_size * 0.05) * 0.90
-    st.write(f"First Payout (Net 5%): **${payout:,.2f}**")
-    st.metric("Net Profit (Payout - Total Investment)", f"${payout - total_sunk:,.2f}")
+    if st.session_state.phase2_status != "Passed":
+        st.markdown("### 🔒 Locked")
+        st.warning("Get Funded (Pass Phase 2) to see this section.")
+    else:
+        st.markdown("<div class='big-header'>Phase 3: The Harvest</div>", unsafe_allow_html=True)
+        st.info("ℹ️ Strategy Change: Now we want the PROP account to WIN. We burn CEX cash to secure the 90% Payout.")
+        
+        funded_target = acct_size * 0.05
+        total_sunk = fee + p1['cex_loss_pass'] + p2['cex_loss_pass']
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### 📊 Trade Setup")
+            st.write(f"Target Profit (5%): **${funded_target:,.0f}**")
+            st.write(f"Prop Size: **${funded['prop_size']:,.0f}**")
+            st.write(f"CEX Size (Hedge): **${funded['cex_size']:,.0f}**")
+        
+        with c2:
+            st.markdown("### 💰 Financial Projection")
+            prop_payout = funded_target * 0.90
+            cex_burn = funded['cex_loss_pass']
+            net_take_home = prop_payout - cex_burn
+            
+            st.write(f"Expected Payout (90%): **+${prop_payout:,.2f}**")
+            st.write(f"CEX Hedge Loss: **-${cex_burn:,.2f}**")
+            st.write(f"Previous Sunk Costs: **-${total_sunk:,.2f}**")
+            
+            final_pnl = net_take_home - total_sunk
+            
+            if final_pnl > 0:
+                st.success(f"🎉 TOTAL PROFIT (After recovering all costs): +${final_pnl:,.2f}")
+            else:
+                st.warning(f"⚠️ almost break-even. You need {abs(final_pnl/net_take_home):.1f} more payouts to be profitable.")
 
+st.markdown("---")
+st.caption("v3.0 - 'True Cost' algorithm active. Slippage, Swaps, and Commissions included in all PnL projections.")
