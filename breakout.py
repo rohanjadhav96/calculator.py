@@ -8,8 +8,11 @@ st.set_page_config(page_title="Breakout Hedge Commander", layout="wide", page_ic
 # --- SESSION STATE ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
 if 'phase2_status' not in st.session_state: st.session_state.phase2_status = "Pending"
-if 'risk_p1' not in st.session_state: st.session_state.risk_p1 = 3.6  # Kitakita's P1 Risk
-if 'risk_p2' not in st.session_state: st.session_state.risk_p2 = 4.8  # Kitakita's P2 Risk
+# Default Presets (Kitakita)
+if 'risk_p1' not in st.session_state: st.session_state.risk_p1 = 3.6
+if 'lev_p1' not in st.session_state: st.session_state.lev_p1 = 3.6
+if 'risk_p2' not in st.session_state: st.session_state.risk_p2 = 4.8
+if 'lev_p2' not in st.session_state: st.session_state.lev_p2 = 4.8
 
 # --- STYLING ---
 st.markdown("""
@@ -27,23 +30,23 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v32")
-st.caption("Kitakita Edition: Syntax Fixed & Optimized")
+st.title("🛡️ Breakout Hedge Commander v34")
+st.caption("Advanced Mode: Decoupled Risk & Leverage")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("1. Strategy Presets")
     st.markdown("""
     <div class='info-box'>
-    <b>Strategy Update:</b><br>
-    • <b>Phase 1:</b> Uses 3.6% Risk (Lower target = Lower leverage needed).<br>
-    • <b>Phase 2/Funded:</b> Uses 4.8% Risk (High target/speed).
+    <b>Presets (Kitakita):</b><br>
+    • <b>Phase 1:</b> 3.6% Risk | 3.6x Lev<br>
+    • <b>Phase 2:</b> 4.8% Risk | 4.8x Lev
     </div>
     """, unsafe_allow_html=True)
     
-    if st.button("⚡ RESET TO KITAKITA DEFAULTS"):
-        st.session_state.risk_p1 = 3.6
-        st.session_state.risk_p2 = 4.8
+    if st.button("⚡ RESET DEFAULTS"):
+        st.session_state.risk_p1 = 3.6; st.session_state.lev_p1 = 3.6
+        st.session_state.risk_p2 = 4.8; st.session_state.lev_p2 = 4.8
         st.rerun()
 
     st.markdown("---")
@@ -55,30 +58,38 @@ with st.sidebar:
     apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
     
     # FEE LOGIC
-    if acct_choice == 25000:
-        base_fee = 250; add_on = 25
-    elif acct_choice == 50000:
-        base_fee = 450; add_on = 45
-    elif acct_choice == 100000:
-        base_fee = 750; add_on = 75
+    if acct_choice == 25000: base_fee = 250; add_on = 25
+    elif acct_choice == 50000: base_fee = 450; add_on = 45
+    elif acct_choice == 100000: base_fee = 750; add_on = 75
         
     raw_fee = base_fee + add_on if "90%" in split_choice else base_fee
     final_fee = raw_fee * 0.98 if apply_discount else raw_fee
     
-    st.metric("Required Fee (Per Account)", f"${final_fee:.2f}")
-    if num_accounts > 1:
-        st.caption(f"Total Investment: ${final_fee * num_accounts:,.2f}")
+    st.metric("Fee (Per Account)", f"${final_fee:.2f}")
     
     acct_size = acct_choice
     fee = final_fee
     profit_split_pct = 0.90 if "90%" in split_choice else 0.80
     
-    st.header("3. Risk Management")
+    st.header("3. Advanced Risk Settings")
+    st.markdown("<div class='success-box'><b>Note:</b> You can now set Risk (Loss Amount) and Leverage (Position Size) separately.</div>", unsafe_allow_html=True)
+    
     max_dd_pct = st.number_input("Max Drawdown Limit (%)", 8.0) / 100
     
-    # SPLIT RISK INPUTS
-    risk_p1_in = st.number_input("Phase 1 Risk (%)", value=st.session_state.risk_p1, step=0.1, format="%.1f") / 100
-    risk_p2_in = st.number_input("Phase 2/Funded Risk (%)", value=st.session_state.risk_p2, step=0.1, format="%.1f") / 100
+    st.markdown("**Phase 1 Settings**")
+    c1, c2 = st.columns(2)
+    risk_p1_in = c1.number_input("P1 Risk (%)", 0.1, 10.0, st.session_state.risk_p1, 0.1) / 100
+    lev_p1_in = c2.number_input("P1 Leverage (x)", 1.0, 20.0, st.session_state.lev_p1, 0.1)
+
+    st.markdown("**Phase 2 / Funded Settings**")
+    c3, c4 = st.columns(2)
+    risk_p2_in = c3.number_input("P2 Risk (%)", 0.1, 10.0, st.session_state.risk_p2, 0.1) / 100
+    lev_p2_in = c4.number_input("P2 Leverage (x)", 1.0, 20.0, st.session_state.lev_p2, 0.1)
+    
+    # Calculate Implied Stop Loss
+    sl_p1 = risk_p1_in / lev_p1_in
+    sl_p2 = risk_p2_in / lev_p2_in
+    st.caption(f"ℹ️ Implied SL Distance: P1 **{sl_p1*100:.2f}%** | P2 **{sl_p2*100:.2f}%**")
     
     st.header("4. Hedge Ratios")
     ratio_p1 = st.number_input("Phase 1 Ratio", min_value=0.01, max_value=100.0, value=5.8, step=0.1, format="%.2f")
@@ -91,26 +102,36 @@ with st.sidebar:
     cex_comm_rate = 0.0 if zero_cex_fees else (st.number_input("CEX Commission (%)", 0.04, format="%.4f") / 100)
 
 # --- ENGINE ---
-def calculate_metrics(target_profit, ratio_val, risk_pct, is_funded=False, funded_ratio=0.0):
+def calculate_metrics(target_profit, ratio_val, risk_pct, leverage, is_funded=False, funded_ratio=0.0):
+    # 1. RISK Amount (Loss if SL hit)
     risk_usd = acct_size * risk_pct
-    sl_dist = 0.01 
-    prop_size = risk_usd / sl_dist
+    
+    # 2. POSITION SIZE (Based on Leverage)
+    prop_size = acct_size * leverage
     
     if is_funded:
         cex_size = prop_size * funded_ratio
     else:
         cex_size = prop_size / ratio_val
 
-    # FRICTION CALCULATION
-    # Pass Scenario: 1x Commission (Open -> Close)
+    # 3. FRICTION (Based on SIZE, not Risk)
+    # Pass: 1x Comm
     prop_fric_pass = (prop_size * prop_comm_rate * 2)
     cex_fric_pass = (cex_size * cex_comm_rate * 2)
     
-    # Fail Scenario: 3x Commission (Open -> SL -> Open Drain -> Close Drain)
-    total_drain = acct_size * max_dd_pct
+    # Fail: 3x Comm (approx) logic
+    # The Drain Trade assumes we use MAX leverage available or same leverage?
+    # Usually, to drain quickly, you use max leverage. 
+    # But let's assume we keep the SAME leverage to be consistent with user settings.
     
-    # Volume calculation for fail scenario
-    total_fail_volume_prop = total_drain / 0.01
+    total_drain = acct_size * max_dd_pct
+    # How many trades of this leverage does it take to drain 8%?
+    # Multiplier = Total Drain / Risk Per Trade
+    volume_multiplier = max_dd_pct / risk_pct
+    
+    # Total Volume processed during the "Drain" process
+    total_fail_volume_prop = prop_size * volume_multiplier
+    
     if is_funded:
         total_fail_volume_cex = total_fail_volume_prop * funded_ratio
     else:
@@ -142,10 +163,10 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, is_funded=False, funde
     }
 
 # --- CALCULATIONS ---
-# Phase 1 uses specific P1 Risk
-p1 = calculate_metrics(acct_size * 0.05, ratio_p1, risk_p1_in)
-# Phase 2 uses P2 Risk
-p2 = calculate_metrics(acct_size * 0.10, ratio_p2, risk_p2_in)
+# P1 uses P1 inputs
+p1 = calculate_metrics(acct_size * 0.05, ratio_p1, risk_p1_in, lev_p1_in)
+# P2 uses P2 inputs
+p2 = calculate_metrics(acct_size * 0.10, ratio_p2, risk_p2_in, lev_p2_in)
 
 total_sunk = fee + p1['pass_cost'] + p2['pass_cost']
 
@@ -155,13 +176,13 @@ t1, t2, t3 = st.tabs(["Phase 1", "Phase 2", "Funded Phase"])
 # === PHASE 1 ===
 with t1:
     st.markdown("<div class='big-header'>Phase 1: One-Shot Pass</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='info-box'>Using <b>{risk_p1_in*100}% Risk</b> (3.6x Leverage) as per Kitakita's optimization.</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='info-box'>Risking <b>{risk_p1_in*100:.1f}%</b> (${acct_size*risk_p1_in:,.0f}) using <b>{lev_p1_in}x Leverage</b>.</div>", unsafe_allow_html=True)
     
     if st.session_state.phase1_status == "Pending":
         c1, c2, c3 = st.columns(3)
         c1.metric("Prop Size", f"${p1['prop_size']:,.0f}")
         c2.metric("CEX Size", f"${p1['cex_size']:,.0f}")
-        c3.metric("Risk Amount", f"${acct_size*risk_p1_in:,.0f}")
+        c3.metric("Est. SL Distance", f"{sl_p1*100:.2f}%")
         
         # Display Totals
         pass_cost_disp = p1['pass_cost'] * num_accounts
@@ -176,7 +197,7 @@ with t1:
             if st.button("Phase 1 FAILED", key="p1_fail"): st.session_state.phase1_status="Failed"; st.rerun()
 
     elif st.session_state.phase1_status == "Passed":
-        # Pre-calculate to avoid f-string syntax errors
+        # Pre-calc for display
         total_fee_disp = fee * num_accounts
         total_hedge_disp = p1['pass_cost'] * num_accounts
         total_sunk_disp = (fee + p1['pass_cost']) * num_accounts
@@ -192,7 +213,7 @@ with t1:
         if st.button("Undo Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
 
     elif st.session_state.phase1_status == "Failed":
-        # Pre-calculate
+        # Pre-calc
         total_refund_disp = p1['fail_refund'] * num_accounts
         total_fee_disp = fee * num_accounts
         net_profit_disp = total_refund_disp - total_fee_disp
@@ -213,7 +234,7 @@ with t2:
         st.warning("🔒 Complete Phase 1 first.")
     else:
         st.markdown("<div class='big-header'>Phase 2: One-Shot Pass</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='info-box'>Using <b>{risk_p2_in*100}% Risk</b> (4.8x Leverage) for 10% target.</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='info-box'>Risking <b>{risk_p2_in*100:.1f}%</b> (${acct_size*risk_p2_in:,.0f}) using <b>{lev_p2_in}x Leverage</b>.</div>", unsafe_allow_html=True)
         
         pass_cost_disp = p2['pass_cost'] * num_accounts
         fail_refund_disp = p2['fail_refund'] * num_accounts
@@ -228,7 +249,7 @@ with t2:
                 if st.button("Phase 2 FAILED", key="p2_fail"): st.session_state.phase2_status="Failed"; st.rerun()
 
         elif st.session_state.phase2_status == "Passed":
-            # Pre-calculate
+            # Pre-calc
             p1_cost_total = p1['pass_cost'] * num_accounts
             p2_cost_total = p2['pass_cost'] * num_accounts
             total_inv_total = total_sunk * num_accounts
@@ -244,7 +265,7 @@ with t2:
             if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
 
         elif st.session_state.phase2_status == "Failed":
-            # Pre-calculate
+            # Pre-calc
             total_refund_disp = p2['fail_refund'] * num_accounts
             total_sunk_prev = (fee + p1['pass_cost']) * num_accounts
             net_res_disp = total_refund_disp - total_sunk_prev
@@ -271,8 +292,7 @@ with t3:
         st.markdown("**Tools:**")
         if st.button("🧪 Auto-Breakeven Ratio"):
             full_drain = acct_size * max_dd_pct
-            # Using P2 Risk for Funded logic
-            # Sunk Cost / Drain Amount
+            # Uses Total Sunk / Full Drain Amount
             safe_ratio = total_sunk / full_drain
             if safe_ratio > 2.0: safe_ratio = 2.0
             st.session_state.funded_ratio = safe_ratio
@@ -284,8 +304,8 @@ with t3:
         f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, st.session_state.funded_ratio, 0.01)
         st.session_state.funded_ratio = f_ratio
 
-    # CALC PER ACCOUNT (Using P2 Risk for Funded)
-    f_metrics = calculate_metrics(target_profit_amt, 0, risk_p2_in, is_funded=True, funded_ratio=f_ratio)
+    # CALC PER ACCOUNT (Using P2 Risk/Lev for Funded High Speed)
+    f_metrics = calculate_metrics(target_profit_amt, 0, risk_p2_in, lev_p2_in, is_funded=True, funded_ratio=f_ratio)
     
     # Per Account
     payout_one = target_profit_amt * profit_split_pct
