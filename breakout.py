@@ -27,8 +27,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v31")
-st.caption("Kitakita Edition: Optimized Leverage & Triple-Fee Fail Logic")
+st.title("🛡️ Breakout Hedge Commander v32")
+st.caption("Kitakita Edition: Syntax Fixed & Optimized")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -107,16 +107,9 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, is_funded=False, funde
     cex_fric_pass = (cex_size * cex_comm_rate * 2)
     
     # Fail Scenario: 3x Commission (Open -> SL -> Open Drain -> Close Drain)
-    # We estimate volume for the "Drain Trade" based on remaining equity
     total_drain = acct_size * max_dd_pct
-    drain_multiplier = max_dd_pct / risk_pct # e.g. 8% / 4% = 2.0x volume roughly
     
-    # Applying the "Kitakita Rule": Fail Friction is higher
-    # Actually, let's correspond strictly:
-    # Trade 1 (Fail): 1x Comm
-    # Trade 2 (Drain): (Remaining Drain / Risk) * Comm
-    # Total Volume involved in failure = Total Drain Amount / 1% SL distance
-    
+    # Volume calculation for fail scenario
     total_fail_volume_prop = total_drain / 0.01
     if is_funded:
         total_fail_volume_cex = total_fail_volume_prop * funded_ratio
@@ -133,7 +126,7 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, is_funded=False, funde
     else:
         cex_loss_pass = (prop_gross / ratio_val) + cex_fric_pass
 
-    # FAIL LOGIC (Full 8% Drain with Higher Friction)
+    # FAIL LOGIC
     if is_funded:
         cex_win_gross = total_drain * funded_ratio
     else:
@@ -162,7 +155,7 @@ t1, t2, t3 = st.tabs(["Phase 1", "Phase 2", "Funded Phase"])
 # === PHASE 1 ===
 with t1:
     st.markdown("<div class='big-header'>Phase 1: One-Shot Pass</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='info-box'>Using <b>{risk_p1_in*100}% Risk</b> (3.6x Leverage) as per Kitakita's optimization for 5% target.</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='info-box'>Using <b>{risk_p1_in*100}% Risk</b> (3.6x Leverage) as per Kitakita's optimization.</div>", unsafe_allow_html=True)
     
     if st.session_state.phase1_status == "Pending":
         c1, c2, c3 = st.columns(3)
@@ -183,24 +176,33 @@ with t1:
             if st.button("Phase 1 FAILED", key="p1_fail"): st.session_state.phase1_status="Failed"; st.rerun()
 
     elif st.session_state.phase1_status == "Passed":
+        # Pre-calculate to avoid f-string syntax errors
+        total_fee_disp = fee * num_accounts
+        total_hedge_disp = p1['pass_cost'] * num_accounts
+        total_sunk_disp = (fee + p1['pass_cost']) * num_accounts
+        
         html_p1 = f"""
         <div class="result-card" style="border-left: 5px solid #00FF7F;">
             <div class="pass-header">✅ Phase 1 Passed ({num_accounts} Accts)</div>
-            <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fee*num_accounts:,.2f}</span></div>
-            <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${p1['pass_cost']*num_accounts:,.2f}</span></div>
-            <div class="total-row"><span>Total Sunk:</span><span class="money-neg">-${(fee+p1['pass_cost'])*num_accounts:,.2f}</span></div>
+            <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${total_fee_disp:,.2f}</span></div>
+            <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${total_hedge_disp:,.2f}</span></div>
+            <div class="total-row"><span>Total Sunk:</span><span class="money-neg">-${total_sunk_disp:,.2f}</span></div>
         </div>"""
         st.markdown(html_p1, unsafe_allow_html=True)
         if st.button("Undo Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
 
     elif st.session_state.phase1_status == "Failed":
-        net = (p1['fail_refund'] - fee) * num_accounts
+        # Pre-calculate
+        total_refund_disp = p1['fail_refund'] * num_accounts
+        total_fee_disp = fee * num_accounts
+        net_profit_disp = total_refund_disp - total_fee_disp
+        
         html_fail = f"""
         <div class="result-card" style="border-left: 5px solid #FF4B4B;">
             <div class="fail-header">❌ Phase 1 Failed ({num_accounts} Accts)</div>
-            <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${p1['fail_refund']*num_accounts:,.2f}</span></div>
-            <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fee*num_accounts:,.2f}</span></div>
-            <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if net>0 else 'money-neg'}">${net:,.2f}</span></div>
+            <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${total_refund_disp:,.2f}</span></div>
+            <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${total_fee_disp:,.2f}</span></div>
+            <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if net_profit_disp>0 else 'money-neg'}">${net_profit_disp:,.2f}</span></div>
         </div>"""
         st.markdown(html_fail, unsafe_allow_html=True)
         if st.button("Restart Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
@@ -226,7 +228,98 @@ with t2:
                 if st.button("Phase 2 FAILED", key="p2_fail"): st.session_state.phase2_status="Failed"; st.rerun()
 
         elif st.session_state.phase2_status == "Passed":
-            total_inv = total_sunk * num_accounts
+            # Pre-calculate
+            p1_cost_total = p1['pass_cost'] * num_accounts
+            p2_cost_total = p2['pass_cost'] * num_accounts
+            total_inv_total = total_sunk * num_accounts
+            
             html_p2 = f"""
             <div class="result-card" style="border-left: 5px solid #00FF7F;">
-                <div class="pass-header">🏆 YOU
+                <div class="pass-header">🏆 YOU ARE FUNDED ({num_accounts} Accts)</div>
+                <div class="money-row"><span>Total Phase 1 Cost:</span><span class="money-neg">-${p1_cost_total:,.2f}</span></div>
+                <div class="money-row"><span>Total Phase 2 Cost:</span><span class="money-neg">-${p2_cost_total:,.2f}</span></div>
+                <div class="total-row"><span>TOTAL INVESTMENT:</span><span class="money-neg">-${total_inv_total:,.2f}</span></div>
+            </div>"""
+            st.markdown(html_p2, unsafe_allow_html=True)
+            if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
+
+        elif st.session_state.phase2_status == "Failed":
+            # Pre-calculate
+            total_refund_disp = p2['fail_refund'] * num_accounts
+            total_sunk_prev = (fee + p1['pass_cost']) * num_accounts
+            net_res_disp = total_refund_disp - total_sunk_prev
+            
+            html_f2 = f"""
+            <div class="result-card" style="border-left: 5px solid #FF4B4B;">
+                <div class="fail-header">❌ Phase 2 Failed</div>
+                <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${total_refund_disp:,.2f}</span></div>
+                <div class="money-row"><span>Total Sunk:</span><span class="money-neg">-${total_sunk_prev:,.2f}</span></div>
+                <div class="total-row"><span>NET RESULT:</span><span class="{'money-pos' if net_res_disp>0 else 'money-neg'}">${net_res_disp:,.2f}</span></div>
+            </div>"""
+            st.markdown(html_f2, unsafe_allow_html=True)
+            if st.button("Restart Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
+
+# === FUNDED ===
+with t3:
+    st.markdown("<div class='big-header'>Funded Phase: Sniper Mode</div>", unsafe_allow_html=True)
+    st.markdown(f"**Live Accounts:** {num_accounts} | **Split:** {split_choice}")
+
+    target_profit_amt = st.number_input("Target Withdrawal Amount (Per Account):", value=4000.0, step=100.0)
+    
+    col_tools, col_ratio = st.columns([1, 2])
+    with col_tools:
+        st.markdown("**Tools:**")
+        if st.button("🧪 Auto-Breakeven Ratio"):
+            full_drain = acct_size * max_dd_pct
+            # Using P2 Risk for Funded logic
+            # Sunk Cost / Drain Amount
+            safe_ratio = total_sunk / full_drain
+            if safe_ratio > 2.0: safe_ratio = 2.0
+            st.session_state.funded_ratio = safe_ratio
+            st.success(f"Set to {safe_ratio:.2f}")
+            st.rerun()
+            
+    with col_ratio:
+        if 'funded_ratio' not in st.session_state: st.session_state.funded_ratio = 0.75
+        f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, st.session_state.funded_ratio, 0.01)
+        st.session_state.funded_ratio = f_ratio
+
+    # CALC PER ACCOUNT (Using P2 Risk for Funded)
+    f_metrics = calculate_metrics(target_profit_amt, 0, risk_p2_in, is_funded=True, funded_ratio=f_ratio)
+    
+    # Per Account
+    payout_one = target_profit_amt * profit_split_pct
+    net_win_one = payout_one - f_metrics['pass_cost']
+    net_fail_one = f_metrics['fail_refund'] - total_sunk
+    
+    # Totals (Live Multiplier)
+    goal_total_disp = target_profit_amt * num_accounts
+    payout_total_disp = payout_one * num_accounts
+    hedge_cost_total_disp = f_metrics['pass_cost'] * num_accounts
+    net_win_total_disp = net_win_one * num_accounts
+    
+    refund_total_disp = f_metrics['fail_refund'] * num_accounts
+    sunk_total_disp = total_sunk * num_accounts
+    net_fail_total_disp = net_fail_one * num_accounts
+
+    # DISPLAY CARDS
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"""
+        <div class="result-card" style="border: 1px solid #00FF7F;">
+            <div class="pass-header">SCENARIO A: SNIPE & WITHDRAW</div>
+            <div class="money-row"><span>Goal ({num_accounts}x):</span><span style="color:white;">${goal_total_disp:,.2f}</span></div>
+            <div class="money-row"><span>Payout:</span><span class="money-pos">+${payout_total_disp:,.2f}</span></div>
+            <div class="money-row"><span>Hedge Cost:</span><span class="money-neg">-${hedge_cost_total_disp:,.2f}</span></div>
+            <div class="total-row"><span>NET PROFIT:</span><span class="{'money-pos' if net_win_total_disp>0 else 'money-neg'}">${net_win_total_disp:,.2f}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="result-card" style="border: 1px solid #FF4B4B;">
+            <div class="fail-header">SCENARIO B: MISS & BURN</div>
+            <div class="money-row"><span>Refund (8% Drain):</span><span class="money-pos">+${refund_total_disp:,.2f}</span></div>
+            <div class="money-row"><span>Sunk Costs:</span><span class="money-neg">-${sunk_total_disp:,.2f}</span></div>
+            <div class="total-row"><span>EXIT PROFIT:</span><span class="{'money-pos' if net_fail_total_disp>0 else 'money-neg'}">${net_fail_total_disp:,.2f}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
