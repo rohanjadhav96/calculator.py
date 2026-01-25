@@ -35,8 +35,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v38")
-st.caption("Dual-Mode: Split Drain (4.5% Cap) vs. Pro Funding")
+st.title("🛡️ Breakout Hedge Commander v39")
+st.caption("Visual Fix: Explicit Fee Tracking in Phase 2")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -46,33 +46,27 @@ with st.sidebar:
     c_farm, c_pro = st.columns(2)
     
     if c_farm.button("💸 CASH FARMER"):
-        # Logic: 4.5% Daily Risk, Max Leverage, Aggressive Hedge
-        st.session_state.risk_p1 = 4.5  # Cap at 4.5% Daily
-        st.session_state.lev_p1 = 5.0   # Max Speed
-        st.session_state.ratio_p1_set = 4.2 # Heavy Hedge
-        
-        # P2 defaults
+        st.session_state.risk_p1 = 4.5
+        st.session_state.lev_p1 = 5.0
+        st.session_state.ratio_p1_set = 4.2
         st.session_state.risk_p2 = 4.8
         st.session_state.lev_p2 = 4.8
         st.session_state.ratio_p2_set = 3.2
         st.rerun()
         
     if c_pro.button("🏆 PRO TRADER"):
-        # Logic: Kitakita Settings (Safe Pass)
         st.session_state.risk_p1 = 3.6
         st.session_state.lev_p1 = 3.6
         st.session_state.ratio_p1_set = 5.8
-        
         st.session_state.risk_p2 = 4.8
         st.session_state.lev_p2 = 4.8
         st.session_state.ratio_p2_set = 3.2
         st.rerun()
 
-    # Dynamic Description
     if st.session_state.risk_p1 < 5.0 and st.session_state.ratio_p1_set < 5.0:
-        st.markdown("""<div class='farm-box'><b>Mode: Split Cash Farm</b><br>Target: Burn 4.5% Today.<br>Strategy: Pocket cash today, finish draining tomorrow.</div>""", unsafe_allow_html=True)
+        st.markdown("""<div class='farm-box'><b>Mode: Split Cash Farm</b><br>Target: Burn 4.5% Today.</div>""", unsafe_allow_html=True)
     else:
-        st.markdown("""<div class='success-box'><b>Mode: Pro Trader</b><br>Target: Pass Phase 1.<br>Strategy: Minimal Cost, Max Safety.</div>""", unsafe_allow_html=True)
+        st.markdown("""<div class='success-box'><b>Mode: Pro Trader</b><br>Target: Safe Pass.</div>""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.header("2. Account Configuration")
@@ -135,28 +129,28 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage, is_funded=Fa
     else:
         cex_size = prop_size / ratio_val
 
-    # Friction Pass (1 Trade)
+    # Friction Pass
     prop_fric_pass = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
     cex_fric_pass = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
-    # --- Fail Logic A: Single Trade (Based on Input Risk) ---
+    # Friction Fail (Trade Only)
     prop_fric_trade = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
     cex_fric_trade = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
+    # Friction Fail (Full Drain)
+    total_drain = acct_size * max_dd_pct
+    vol_mult = max_dd_pct / risk_pct
+    prop_fric_drain = prop_fric_trade * vol_mult
+    cex_fric_drain = cex_fric_trade * vol_mult
+    
+    # Fail Trade Net
     if is_funded:
         cex_win_gross_trade = risk_usd * funded_ratio
     else:
         cex_win_gross_trade = risk_usd / ratio_val
     cex_win_net_trade = cex_win_gross_trade - cex_fric_trade
     
-    # --- Fail Logic B: Full Drain (Max Drawdown) ---
-    total_drain = acct_size * max_dd_pct
-    vol_mult = max_dd_pct / risk_pct
-    
-    # Full Drain Friction (Scaled Volume)
-    prop_fric_drain = prop_fric_trade * vol_mult
-    cex_fric_drain = cex_fric_trade * vol_mult
-    
+    # Fail Drain Net
     if is_funded:
         cex_win_gross_drain = total_drain * funded_ratio
     else:
@@ -172,8 +166,8 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage, is_funded=Fa
 
     return {
         "pass_cost": cex_loss_pass, 
-        "fail_refund_trade": cex_win_net_trade,   # Result of just the risked trade
-        "fail_refund_full": cex_win_net_drain,    # Result if account hits 8% limit
+        "fail_refund_trade": cex_win_net_trade,
+        "fail_refund_full": cex_win_net_drain,
         "prop_size": prop_size, 
         "cex_size": cex_size
     }
@@ -200,14 +194,9 @@ with t1:
         
         pass_cost_disp = p1['pass_cost'] * num_accounts
         daily_refund_disp = p1['fail_refund_trade'] * num_accounts
-        
-        # Split Drain Logic
-        remaining_dd_pct = max_dd_pct - risk_p1_in
-        if remaining_dd_pct < 0: remaining_dd_pct = 0
-        
-        # Calculate reserve value based on ratio
-        # Remaining Value = (Full Refund - Daily Refund) approx
         full_refund_disp = p1['fail_refund_full'] * num_accounts
+        
+        # Split Drain
         remaining_refund_disp = full_refund_disp - daily_refund_disp
         if remaining_refund_disp < 0: remaining_refund_disp = 0
         
@@ -220,7 +209,6 @@ with t1:
             fees_paid = fee * num_accounts
             net_today = daily_refund_disp - fees_paid
             
-            # Card Construction
             card_html = f"""
             <div class="result-card" style="border-left: 5px solid #FF4B4B;">
                 <div class="fail-header">SCENARIO B: STRATEGIC FAIL</div>
@@ -228,8 +216,7 @@ with t1:
                 <div class="money-row"><span>Fees Paid (Upfront):</span><span class="money-neg">-${fees_paid:,.2f}</span></div>
                 <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Day 1 Net Cash:</b></span><span class="{'money-pos' if net_today>0 else 'money-neg'}">${net_today:,.2f}</span></div>
                 <br>
-                <div class="money-row"><span>Day 2 Reserve ({remaining_dd_pct*100:.1f}%):</span><span class="money-neu">+${remaining_refund_disp:,.2f}</span></div>
-                <div class="total-row"><span>TOTAL CYCLE VALUE:</span><span class="{'money-pos' if (full_refund_disp-fees_paid)>0 else 'money-neg'}">${(full_refund_disp-fees_paid):,.2f}</span></div>
+                <div class="money-row"><span>Day 2 Reserve:</span><span class="money-neu">+${remaining_refund_disp:,.2f}</span></div>
             </div>"""
             st.markdown(card_html, unsafe_allow_html=True)
             
@@ -263,7 +250,6 @@ with t2:
         st.markdown(f"<div class='info-box'>Risking <b>{risk_p2_in*100:.1f}%</b> using <b>{lev_p2_in}x Leverage</b>.</div>", unsafe_allow_html=True)
         
         pass_cost_disp = p2['pass_cost'] * num_accounts
-        # For Phase 2, we show FULL DRAIN potential as standard behavior
         fail_refund_disp = p2['fail_refund_full'] * num_accounts
         
         if st.session_state.phase2_status == "Pending":
@@ -276,29 +262,35 @@ with t2:
                 if st.button("Phase 2 FAILED", key="p2_fail"): st.session_state.phase2_status="Failed"; st.rerun()
 
         elif st.session_state.phase2_status == "Passed":
+            # FIXED DISPLAY LOGIC
+            fee_total = fee * num_accounts
             p1_cost_total = p1['pass_cost'] * num_accounts
             p2_cost_total = p2['pass_cost'] * num_accounts
-            total_inv_total = total_sunk * num_accounts
+            total_inv_total = fee_total + p1_cost_total + p2_cost_total
             
             html_p2 = f"""
             <div class="result-card" style="border-left: 5px solid #00FF7F;">
                 <div class="pass-header">🏆 YOU ARE FUNDED ({num_accounts} Accts)</div>
-                <div class="money-row"><span>Total Phase 1 Cost:</span><span class="money-neg">-${p1_cost_total:,.2f}</span></div>
-                <div class="money-row"><span>Total Phase 2 Cost:</span><span class="money-neg">-${p2_cost_total:,.2f}</span></div>
+                <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fee_total:,.2f}</span></div>
+                <div class="money-row"><span>Phase 1 Hedge:</span><span class="money-neg">-${p1_cost_total:,.2f}</span></div>
+                <div class="money-row"><span>Phase 2 Hedge:</span><span class="money-neg">-${p2_cost_total:,.2f}</span></div>
                 <div class="total-row"><span>TOTAL INVESTMENT:</span><span class="money-neg">-${total_inv_total:,.2f}</span></div>
             </div>"""
             st.markdown(html_p2, unsafe_allow_html=True)
             if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
 
         elif st.session_state.phase2_status == "Failed":
-            total_sunk_prev = (fee + p1['pass_cost']) * num_accounts
+            fee_total = fee * num_accounts
+            p1_cost_total = p1['pass_cost'] * num_accounts
+            total_sunk_prev = fee_total + p1_cost_total
             net_res_disp = fail_refund_disp - total_sunk_prev
             
             html_f2 = f"""
             <div class="result-card" style="border-left: 5px solid #FF4B4B;">
                 <div class="fail-header">❌ Phase 2 Failed</div>
                 <div class="money-row"><span>Total Refund (8% Drain):</span><span class="money-pos">+${fail_refund_disp:,.2f}</span></div>
-                <div class="money-row"><span>Total Sunk (P1+Fee):</span><span class="money-neg">-${total_sunk_prev:,.2f}</span></div>
+                <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fee_total:,.2f}</span></div>
+                <div class="money-row"><span>Phase 1 Hedge:</span><span class="money-neg">-${p1_cost_total:,.2f}</span></div>
                 <div class="total-row"><span>NET RESULT:</span><span class="{'money-pos' if net_res_disp>0 else 'money-neg'}">${net_res_disp:,.2f}</span></div>
             </div>"""
             st.markdown(html_f2, unsafe_allow_html=True)
@@ -327,15 +319,22 @@ with t3:
         f_ratio = st.slider("Hedge Ratio (CEX Risk per $1 Prop)", 0.1, 2.0, st.session_state.funded_ratio, 0.01)
         st.session_state.funded_ratio = f_ratio
 
-    # CALC PER ACCOUNT (Using P2 Risk/Lev for Funded)
+    # CALC PER ACCOUNT
     f_metrics = calculate_metrics(target_profit_amt, 0, risk_p2_in, lev_p2_in, is_funded=True, funded_ratio=f_ratio)
     
-    # Per Account
     payout_one = target_profit_amt * profit_split_pct
     net_win_one = payout_one - f_metrics['pass_cost']
     
-    # Net Fail (Funded is always full drain logic)
-    net_fail_one = f_metrics['fail_refund_full'] - total_sunk
+    # Fail calc (Funded)
+    total_drain = acct_size * max_dd_pct
+    vol_mult = max_dd_pct / risk_p2_in
+    prop_fric_fail = (f_metrics['prop_size'] * vol_mult * prop_comm_rate * 2)
+    cex_fric_fail = (f_metrics['cex_size'] * vol_mult * cex_comm_rate * 2)
+    
+    cex_win_gross_drain = total_drain * f_ratio
+    cex_win_net_drain = cex_win_gross_drain - cex_fric_fail
+    
+    net_fail_one = cex_win_net_drain - total_sunk
     
     # Totals
     goal_total_disp = target_profit_amt * num_accounts
@@ -343,7 +342,7 @@ with t3:
     hedge_cost_total_disp = f_metrics['pass_cost'] * num_accounts
     net_win_total_disp = net_win_one * num_accounts
     
-    refund_total_disp = f_metrics['fail_refund_full'] * num_accounts
+    refund_total_disp = cex_win_net_drain * num_accounts
     sunk_total_disp = total_sunk * num_accounts
     net_fail_total_disp = net_fail_one * num_accounts
 
