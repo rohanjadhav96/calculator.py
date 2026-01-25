@@ -30,8 +30,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v34")
-st.caption("Advanced Mode: Decoupled Risk & Leverage")
+st.title("🛡️ Breakout Hedge Commander v35")
+st.caption("Final Audit: Advanced Risk/Leverage & Exact Pricing")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -57,7 +57,10 @@ with st.sidebar:
     split_choice = st.radio("Profit Split", ["90% (Pro)", "80% (Standard)"], horizontal=True)
     apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
     
-    # FEE LOGIC
+    # FEE LOGIC (Corrected Structure)
+    # 25k: Base 250 | +25 for 90%
+    # 50k: Base 450 | +45 for 90%
+    # 100k: Base 750 | +75 for 90%
     if acct_choice == 25000: base_fee = 250; add_on = 25
     elif acct_choice == 50000: base_fee = 450; add_on = 45
     elif acct_choice == 100000: base_fee = 750; add_on = 75
@@ -66,6 +69,8 @@ with st.sidebar:
     final_fee = raw_fee * 0.98 if apply_discount else raw_fee
     
     st.metric("Fee (Per Account)", f"${final_fee:.2f}")
+    if num_accounts > 1:
+        st.caption(f"Total Investment: ${final_fee * num_accounts:,.2f}")
     
     acct_size = acct_choice
     fee = final_fee
@@ -100,6 +105,13 @@ with st.sidebar:
     prop_comm_rate = st.number_input("Prop Commission (%)", 0.04, format="%.4f") / 100
     zero_cex_fees = st.checkbox("🔥 Use Zero-Fee CEX?", value=True)
     cex_comm_rate = 0.0 if zero_cex_fees else (st.number_input("CEX Commission (%)", 0.04, format="%.4f") / 100)
+    
+    include_swap = st.checkbox("Include Swap Fees?", value=False)
+    swap_rate = 0.0
+    days_held = 0.0
+    if include_swap:
+        swap_rate = st.number_input("Swap Rate (%)", 0.03, format="%.4f") / 100
+        days_held = st.number_input("Avg Days Held", value=1)
 
 # --- ENGINE ---
 def calculate_metrics(target_profit, ratio_val, risk_pct, leverage, is_funded=False, funded_ratio=0.0):
@@ -115,30 +127,21 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage, is_funded=Fa
         cex_size = prop_size / ratio_val
 
     # 3. FRICTION (Based on SIZE, not Risk)
-    # Pass: 1x Comm
-    prop_fric_pass = (prop_size * prop_comm_rate * 2)
-    cex_fric_pass = (cex_size * cex_comm_rate * 2)
+    prop_fric_pass = (prop_size * prop_comm_rate * 2) + ((prop_size * swap_rate * days_held) if include_swap else 0)
+    cex_fric_pass = (cex_size * cex_comm_rate * 2) + ((cex_size * swap_rate * days_held) if include_swap else 0)
     
-    # Fail: 3x Comm (approx) logic
-    # The Drain Trade assumes we use MAX leverage available or same leverage?
-    # Usually, to drain quickly, you use max leverage. 
-    # But let's assume we keep the SAME leverage to be consistent with user settings.
-    
+    # Fail: Scale friction by volume needed to drain account
     total_drain = acct_size * max_dd_pct
-    # How many trades of this leverage does it take to drain 8%?
-    # Multiplier = Total Drain / Risk Per Trade
     volume_multiplier = max_dd_pct / risk_pct
     
-    # Total Volume processed during the "Drain" process
     total_fail_volume_prop = prop_size * volume_multiplier
-    
     if is_funded:
         total_fail_volume_cex = total_fail_volume_prop * funded_ratio
     else:
         total_fail_volume_cex = total_fail_volume_prop / ratio_val
         
-    prop_fric_fail = total_fail_volume_prop * prop_comm_rate * 2
-    cex_fric_fail = total_fail_volume_cex * cex_comm_rate * 2
+    prop_fric_fail = (total_fail_volume_prop * prop_comm_rate * 2) + ((total_fail_volume_prop * swap_rate * days_held) if include_swap else 0)
+    cex_fric_fail = (total_fail_volume_cex * cex_comm_rate * 2) + ((total_fail_volume_cex * swap_rate * days_held) if include_swap else 0)
     
     # PASS LOGIC
     prop_gross = target_profit + prop_fric_pass
@@ -163,9 +166,7 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage, is_funded=Fa
     }
 
 # --- CALCULATIONS ---
-# P1 uses P1 inputs
 p1 = calculate_metrics(acct_size * 0.05, ratio_p1, risk_p1_in, lev_p1_in)
-# P2 uses P2 inputs
 p2 = calculate_metrics(acct_size * 0.10, ratio_p2, risk_p2_in, lev_p2_in)
 
 total_sunk = fee + p1['pass_cost'] + p2['pass_cost']
@@ -184,7 +185,6 @@ with t1:
         c2.metric("CEX Size", f"${p1['cex_size']:,.0f}")
         c3.metric("Est. SL Distance", f"{sl_p1*100:.2f}%")
         
-        # Display Totals
         pass_cost_disp = p1['pass_cost'] * num_accounts
         fail_refund_disp = p1['fail_refund'] * num_accounts
         
@@ -197,7 +197,6 @@ with t1:
             if st.button("Phase 1 FAILED", key="p1_fail"): st.session_state.phase1_status="Failed"; st.rerun()
 
     elif st.session_state.phase1_status == "Passed":
-        # Pre-calc for display
         total_fee_disp = fee * num_accounts
         total_hedge_disp = p1['pass_cost'] * num_accounts
         total_sunk_disp = (fee + p1['pass_cost']) * num_accounts
@@ -213,7 +212,6 @@ with t1:
         if st.button("Undo Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
 
     elif st.session_state.phase1_status == "Failed":
-        # Pre-calc
         total_refund_disp = p1['fail_refund'] * num_accounts
         total_fee_disp = fee * num_accounts
         net_profit_disp = total_refund_disp - total_fee_disp
@@ -249,7 +247,6 @@ with t2:
                 if st.button("Phase 2 FAILED", key="p2_fail"): st.session_state.phase2_status="Failed"; st.rerun()
 
         elif st.session_state.phase2_status == "Passed":
-            # Pre-calc
             p1_cost_total = p1['pass_cost'] * num_accounts
             p2_cost_total = p2['pass_cost'] * num_accounts
             total_inv_total = total_sunk * num_accounts
@@ -265,7 +262,6 @@ with t2:
             if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
 
         elif st.session_state.phase2_status == "Failed":
-            # Pre-calc
             total_refund_disp = p2['fail_refund'] * num_accounts
             total_sunk_prev = (fee + p1['pass_cost']) * num_accounts
             net_res_disp = total_refund_disp - total_sunk_prev
@@ -292,7 +288,6 @@ with t3:
         st.markdown("**Tools:**")
         if st.button("🧪 Auto-Breakeven Ratio"):
             full_drain = acct_size * max_dd_pct
-            # Uses Total Sunk / Full Drain Amount
             safe_ratio = total_sunk / full_drain
             if safe_ratio > 2.0: safe_ratio = 2.0
             st.session_state.funded_ratio = safe_ratio
