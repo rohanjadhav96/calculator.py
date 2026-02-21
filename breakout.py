@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v42", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v43", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -37,8 +37,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v42")
-st.caption("Update: Full Phase 2 Restore + (NEW: 50/50 Expected Value Engine)")
+st.title("🛡️ Breakout Hedge Commander v43")
+st.caption("Update: 1-Step 'Infinite Grind' Loop Tracker")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -281,8 +281,7 @@ with t3:
     if chal_type == "1-Step Pro":
         st.markdown(f"""
         <div class='info-box'>
-        <b>The Math (1-Step):</b> You are in a -${total_sunk:,.0f} hole. You have ${acct_size * max_dd_pct:,.0f} of drawdown to burn.<br>
-        To get your money back, crank the Hedge Ratio up (e.g., 0.85) and drain the account.
+        <b>The Infinite Grind Loop:</b> You are in a -${total_sunk:,.0f} hole. If you win (Scenario A), you extract pure cash to reload the CEX and chip away at the debt. If you fail (Scenario B), you extract the big drain to clear the debt and walk away in profit.
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -315,47 +314,72 @@ with t3:
     cex_fric_fail = (f_metrics['cex_size'] * (max_dd_pct / active_risk) * cex_comm_rate * 2)
     cex_win_net_drain = (total_drain * f_ratio) - cex_fric_fail
     
+    net_trade_cash_win = payout_one - f_metrics['pass_cost']
+    net_trade_cash_fail = cex_win_net_drain
+    
     net_fail_one = cex_win_net_drain - total_sunk
-    net_win_one = payout_one - f_metrics['pass_cost'] - total_sunk
+    net_win_one = net_trade_cash_win - total_sunk
 
     c1, c2 = st.columns(2)
     
     if chal_type == "1-Step Pro":
-        win_title = "SCENARIO A: ACCIDENTAL WIN"
-        fail_title = "SCENARIO B: INTENTIONAL DRAIN"
+        with c1:
+            st.markdown(f"""
+            <div class="result-card" style="border: 1px solid #FFD700;">
+                <div class="pass-header" style="color:#FFD700;">SCENARIO A: ACCIDENTAL WIN (RELOAD)</div>
+                <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_one:,.2f}</span></div>
+                <div class="money-row"><span>Trade Hedge Loss:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
+                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash (Wallet):</b></span><span class="{'money-pos' if net_trade_cash_win>0 else 'money-neg'}">+${net_trade_cash_win:,.2f}</span></div>
+                <br>
+                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
+                <div class="total-row"><span>REMAINING DEBT:</span><span class="{'money-pos' if net_win_one>0 else 'money-neg'}">${net_win_one:,.2f}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"""
+            <div class="result-card" style="border: 1px solid #FF4B4B;">
+                <div class="fail-header">SCENARIO B: FINAL DRAIN (EXIT)</div>
+                <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${cex_win_net_drain:,.2f}</span></div>
+                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash:</b></span><span class="{'money-pos' if net_trade_cash_fail>0 else 'money-neg'}">+${net_trade_cash_fail:,.2f}</span></div>
+                <br>
+                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
+                <div class="total-row"><span>FINAL EXIT NET:</span><span class="{'money-pos' if net_fail_one>0 else 'money-neg'}">${net_fail_one:,.2f}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
     else:
-        win_title = "SCENARIO A: WIN & WITHDRAW"
-        fail_title = "SCENARIO B: FAIL & DRAIN"
-
-    with c1:
-        st.markdown(f"""
-        <div class="result-card" style="border: 1px solid #FFD700;">
-            <div class="pass-header" style="color:#FFD700;">{win_title}</div>
-            <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_one:,.2f}</span></div>
-            <div class="money-row"><span>Trade Hedge Loss:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
-            <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-            <div class="total-row"><span>LIFETIME NET:</span><span class="{'money-pos' if net_win_one>0 else 'money-neg'}">${net_win_one:,.2f}</span></div>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class="result-card" style="border: 1px solid #FF4B4B;">
-            <div class="fail-header">{fail_title}</div>
-            <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${cex_win_net_drain:,.2f}</span></div>
-            <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-            <div class="total-row"><span>LIFETIME NET:</span><span class="{'money-pos' if net_fail_one>0 else 'money-neg'}">${net_fail_one:,.2f}</span></div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    # --- (NEW) EXPECTED VALUE (EV) CALCULATOR ---
+        with c1:
+            st.markdown(f"""
+            <div class="result-card" style="border: 1px solid #00FF7F;">
+                <div class="pass-header">SCENARIO A: WIN & WITHDRAW</div>
+                <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_one:,.2f}</span></div>
+                <div class="money-row"><span>Trade Hedge Loss:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
+                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash:</b></span><span class="{'money-pos' if net_trade_cash_win>0 else 'money-neg'}">+${net_trade_cash_win:,.2f}</span></div>
+                <br>
+                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
+                <div class="total-row"><span>LIFETIME NET:</span><span class="{'money-pos' if net_win_one>0 else 'money-neg'}">${net_win_one:,.2f}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"""
+            <div class="result-card" style="border: 1px solid #FF4B4B;">
+                <div class="fail-header">SCENARIO B: FAIL & DRAIN</div>
+                <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${cex_win_net_drain:,.2f}</span></div>
+                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash:</b></span><span class="{'money-pos' if net_trade_cash_fail>0 else 'money-neg'}">+${net_trade_cash_fail:,.2f}</span></div>
+                <br>
+                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
+                <div class="total-row"><span>LIFETIME NET:</span><span class="{'money-pos' if net_fail_one>0 else 'money-neg'}">${net_fail_one:,.2f}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    # --- EXPECTED VALUE (EV) CALCULATOR ---
     st.markdown("---")
     expected_value = (net_win_one * 0.50) + (net_fail_one * 0.50)
     
     st.markdown(f"""
     <div class="ev-box">
-        <h3 style="color:#FFF;">(NEW) 50/50 Statistical Expected Value (EV)</h3>
-        <p style="color:#ccc; font-size:14px;">If you take 100 Funded setups with a perfect 50% Win Rate, what is your true mathematical average profit per account?</p>
-        <h2 style="color:{'#00FF7F' if expected_value > 0 else '#FF4B4B'};">Average Outcome: ${expected_value:,.2f} per account.</h2>
-        <p style="color:#888; font-size:12px;">Calculation: (Net Win × 50%) + (Net Fail × 50%)</p>
+        <h3 style="color:#FFF;">Single-Trade Expected Value (EV)</h3>
+        <p style="color:#ccc; font-size:14px;">If you flip a coin on this exact setup, what is the mathematical average profit?</p>
+        <h2 style="color:{'#00FF7F' if expected_value > 0 else '#FF4B4B'};">Average Outcome: ${expected_value:,.2f}</h2>
+        <p style="color:#888; font-size:12px;">Calculation: (Lifetime Win Net × 50%) + (Lifetime Fail Net × 50%)</p>
     </div>
     """, unsafe_allow_html=True)
