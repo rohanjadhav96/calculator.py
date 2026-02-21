@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+import math
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v46", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v47", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -32,12 +33,12 @@ st.markdown("""
     .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
     .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
     .farm-box { background-color: #1a1a0a; padding: 10px; border-left: 3px solid #FFD700; font-size: 0.9em; color: #fffacd; margin-bottom: 10px; }
-    .danger-box { background-color: #2a0a0a; padding: 10px; border-left: 3px solid #FF4B4B; font-size: 0.9em; color: #ffcccc; margin-bottom: 10px; }
+    .safety-box { background-color: #0d1b2a; border: 1px solid #4169e1; padding: 15px; border-radius: 8px; margin-top: 10px; margin-bottom: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v46")
-st.caption("Clean Build: Core Features & Live CEX Ledger")
+st.title("🛡️ Breakout Hedge Commander v47")
+st.caption("Update: Anti-Liquidation Engine & Multi-Day Drain Logic")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -170,7 +171,7 @@ if chal_type != "1-Step Pro":
     p2 = calculate_metrics(acct_size * target_p2_pct, ratio_p2, risk_p2_in, lev_p2_in)
     total_sunk_per_acct += p2['pass_cost']
 
-# --- NEW: WALLET LEDGER LOGIC ---
+# --- WALLET LEDGER LOGIC ---
 st.sidebar.markdown("---")
 st.sidebar.header("💳 Live CEX Wallet Ledger")
 if 'starting_capital' not in st.session_state: st.session_state.starting_capital = 5000.0
@@ -187,17 +188,15 @@ if chal_type != "1-Step Pro" and st.session_state.phase2_status == "Passed":
 current_wallet = start_cap - realized_debt
 max_required_funds = total_sunk_per_acct * num_accounts
 
-st.sidebar.metric("Current Available Capital", f"${current_wallet:,.2f}", f"-${realized_debt:,.2f}" if realized_debt > 0 else None, delta_color="normal")
+st.sidebar.metric("Live CEX Wallet Available", f"${current_wallet:,.2f}", f"-${realized_debt:,.2f} Sunk" if realized_debt > 0 else None, delta_color="normal")
 
-if current_wallet < max_required_funds:
-    st.sidebar.error(f"⚠️ **Underfunded!** You need at least **${max_required_funds:,.2f}** to safely pass all evaluations.")
-else:
-    st.sidebar.success(f"✅ **Fully Funded.** You have enough capital to reach the Funded phase (Requires ${max_required_funds:,.2f}).")
+if current_wallet < max_required_funds and st.session_state.phase1_status == "Pending":
+    st.sidebar.error(f"⚠️ **Underfunded for Eval!** You need at least **${max_required_funds:,.2f}** to pass.")
 
 
 # --- TABS ---
 if chal_type == "1-Step Pro":
-    tabs = st.tabs(["Phase 1 (Eval)", "Funded Phase (The Drain)"])
+    tabs = st.tabs(["Phase 1 (Eval)", "Funded Phase (Sniper)"])
     t1, t3 = tabs[0], tabs[1]
 else:
     tabs = st.tabs(["Phase 1", "Phase 2", "Funded Phase"])
@@ -227,8 +226,6 @@ with t1:
                 <div class="money-row"><span><b>CEX Win ({max_dd_pct*100:.0f}% Drain):</b></span><span class="money-pos">+${full_refund_disp:,.2f}</span></div>
                 <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fees_paid:,.2f}</span></div>
                 <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Farm Cash:</b></span><span class="{'money-pos' if net_full_drain>0 else 'money-neg'}">${net_full_drain:,.2f}</span></div>
-                <br>
-                <div class="money-row" style="font-size:1.1em;"><span><b>💳 Wallet After Drain:</b></span><span style="color:#FFF;"><b>${start_cap + net_full_drain:,.2f}</b></span></div>
             </div>"""
             st.markdown(card_html, unsafe_allow_html=True)
             if st.button("Phase 1 FAILED (Reset)", key="p1_fail"): st.session_state.phase1_status="Pending"; st.rerun()
@@ -276,20 +273,16 @@ if chal_type != "1-Step Pro":
                 st.markdown(html_p2, unsafe_allow_html=True)
                 if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
 
-# === FUNDED ===
+# === FUNDED PHASE ===
 with t3:
     st.markdown("<div class='big-header'>Funded Phase Execution</div>", unsafe_allow_html=True)
     
-    if chal_type == "1-Step Pro":
-        st.markdown(f"""
-        <div class='info-box'>
-        <b>The Infinite Grind Loop:</b> You are in a -${realized_debt:,.0f} hole. If you win (Scenario A), you extract pure cash to reload the CEX. If you fail (Scenario B), you extract the big drain to clear the debt.
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        if st.session_state.phase2_status != "Passed":
-            st.warning("🔒 Complete Phase 2 first to unlock Funded Math.")
-            st.stop()
+    if chal_type != "1-Step Pro" and st.session_state.phase2_status != "Passed":
+        st.warning("🔒 Complete Phase 2 first to unlock Funded Math.")
+        st.stop()
+    elif chal_type == "1-Step Pro" and st.session_state.phase1_status != "Passed":
+        st.warning("🔒 Complete Phase 1 first to unlock Funded Math.")
+        st.stop()
 
     target_profit_amt = st.number_input("Target Withdrawal Amount (Per Account):", value=4000.0, step=100.0)
     
@@ -303,17 +296,45 @@ with t3:
     f_ratio = st.slider("Funded Hedge Ratio (Multiplier)", 0.1, 1.5, st.session_state.funded_ratio, 0.01)
     st.session_state.funded_ratio = f_ratio
 
+    # Active metrics for Funded Phase
     active_risk = risk_p1_in if chal_type == "1-Step Pro" else risk_p2_in
     active_lev = lev_p1_in if chal_type == "1-Step Pro" else lev_p2_in
     
     f_metrics = calculate_metrics(target_profit_amt, f_ratio, active_risk, active_lev)
     payout_one = target_profit_amt * profit_split_pct
     
+    # ---------------------------------------------------------
+    # NEW: ANTI-LIQUIDATION ENGINE & MARGIN CHECK
+    # ---------------------------------------------------------
+    cex_margin_req = (f_metrics['cex_size'] / active_lev) * num_accounts
+    max_cex_loss = f_metrics['pass_cost'] * num_accounts
+    safe_balance_needed = cex_margin_req + max_cex_loss
+
+    if current_wallet >= safe_balance_needed:
+        safety_html = f"""
+        <div class="safety-box" style="border-color: #00FF7F;">
+            <h4 style="color:#00FF7F; margin-top:0;">✅ Liquidation Safety Check Passed</h4>
+            <span>To hold this trade safely, you need <b>${cex_margin_req:,.2f}</b> for Margin + <b>${max_cex_loss:,.2f}</b> to absorb the loss before Prop hits TP. Total Required: <b>${safe_balance_needed:,.2f}</b>. Your Wallet: <b>${current_wallet:,.2f}</b>.</span>
+        </div>
+        """
+    else:
+        safety_html = f"""
+        <div class="safety-box" style="border-color: #FF4B4B;">
+            <h4 style="color:#FF4B4B; margin-top:0;">⚠️ DANGER: Liquidation Risk</h4>
+            <span>You need <b>${safe_balance_needed:,.2f}</b> (Margin: ${cex_margin_req:,.0f} + Loss Buffer: ${max_cex_loss:,.0f}) to hold this trade. Your wallet only has <b>${current_wallet:,.2f}</b>. <br><b>You will be force-liquidated before hitting TP. Add funds or lower your ratio.</b></span>
+        </div>
+        """
+    st.markdown(safety_html, unsafe_allow_html=True)
+
+    # ---------------------------------------------------------
+    # NEW: MULTI-DAY DRAIN CALCULATOR
+    # ---------------------------------------------------------
     total_drain = acct_size * max_dd_pct
+    days_to_drain = math.ceil(max_dd_pct / active_risk)
+    
     cex_fric_fail = (f_metrics['cex_size'] * (max_dd_pct / active_risk) * cex_comm_rate * 2)
     cex_win_net_drain = (total_drain * f_ratio) - cex_fric_fail
     
-    # Per account calculations mapped to total active accounts
     net_trade_cash_win_total = (payout_one - f_metrics['pass_cost']) * num_accounts
     net_trade_cash_fail_total = cex_win_net_drain * num_accounts
     
@@ -326,7 +347,7 @@ with t3:
     c1, c2 = st.columns(2)
     
     win_title = "SCENARIO A: ACCIDENTAL WIN (RELOAD)" if chal_type == "1-Step Pro" else "SCENARIO A: WIN & WITHDRAW"
-    fail_title = "SCENARIO B: FINAL DRAIN (EXIT)" if chal_type == "1-Step Pro" else "SCENARIO B: FAIL & DRAIN"
+    fail_title = "SCENARIO B: FINAL EXIT DRAIN" if chal_type == "1-Step Pro" else "SCENARIO B: FAIL & DRAIN"
 
     with c1:
         st.markdown(f"""
@@ -344,7 +365,8 @@ with t3:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #FF4B4B;">
             <div class="fail-header">{fail_title}</div>
-            <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${net_trade_cash_fail_total:,.2f}</span></div>
+            <span style="color:#888; font-size: 0.9em;"><i>*Draining {max_dd_pct*100}% takes <b>{days_to_drain} days</b> (risking {active_risk*100}%/day) to avoid the 3% daily limit.</i></span><br><br>
+            <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD Total):</span><span class="money-pos">+${net_trade_cash_fail_total:,.2f}</span></div>
             <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash Flow:</b></span><span class="{'money-pos' if net_trade_cash_fail_total>0 else 'money-neg'}">+${net_trade_cash_fail_total:,.2f}</span></div>
             <br>
             <div class="money-row" style="font-size:1.1em;"><span><b>💳 Wallet After Drain:</b></span><span style="color:#FFF;"><b>${wallet_after_fail:,.2f}</b></span></div>
