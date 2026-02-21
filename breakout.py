@@ -3,7 +3,7 @@ import pandas as pd
 import math
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v47", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v48", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -37,8 +37,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v47")
-st.caption("Update: Anti-Liquidation Engine & Multi-Day Drain Logic")
+st.title("🛡️ Breakout Hedge Commander v48")
+st.caption("Update: Independent CEX Leverage & Margin Shortfall Calculator")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -92,7 +92,7 @@ with st.sidebar:
     fee = final_fee
     profit_split_pct = 0.90 if "90%" in split_choice else 0.80
 
-    st.header("3. Risk Settings")
+    st.header("3. Prop Firm Settings")
     if chal_type == "1-Step Pro":
         max_dd_pct = 0.05
         target_p1_pct = 0.12
@@ -104,15 +104,17 @@ with st.sidebar:
     st.markdown("**Phase 1 Settings**")
     c1, c2 = st.columns(2)
     risk_p1_in = c1.number_input("P1 Risk (%)", 0.1, 10.0, st.session_state.risk_p1, 0.1) / 100
-    lev_p1_in = c2.number_input("P1 Leverage (x)", 1.0, 20.0, st.session_state.lev_p1, 0.1)
+    lev_p1_in = c2.number_input("P1 Leverage (x)", 1.0, 100.0, st.session_state.lev_p1, 0.1)
 
     if chal_type != "1-Step Pro":
         st.markdown("**Phase 2 Settings**")
         c3, c4 = st.columns(2)
         risk_p2_in = c3.number_input("P2 Risk (%)", 0.1, 10.0, st.session_state.risk_p2, 0.1) / 100
-        lev_p2_in = c4.number_input("P2 Leverage (x)", 1.0, 20.0, st.session_state.lev_p2, 0.1)
+        lev_p2_in = c4.number_input("P2 Leverage (x)", 1.0, 100.0, st.session_state.lev_p2, 0.1)
     
-    st.header("4. Hedge Ratio (Multiplier)")
+    st.header("4. CEX & Hedge Settings")
+    cex_lev_in = st.number_input("CEX Futures Leverage (x)", min_value=1.0, max_value=200.0, value=20.0, step=1.0)
+    
     ratio_p1 = st.number_input("P1 Ratio", min_value=0.01, max_value=5.0, value=st.session_state.ratio_p1_set, step=0.01, format="%.2f")
     if chal_type != "1-Step Pro":
         ratio_p2 = st.number_input("P2 Ratio", min_value=0.01, max_value=5.0, value=st.session_state.ratio_p2_set, step=0.01, format="%.2f")
@@ -186,13 +188,8 @@ if chal_type != "1-Step Pro" and st.session_state.phase2_status == "Passed":
     realized_debt += p2['pass_cost'] * num_accounts
 
 current_wallet = start_cap - realized_debt
-max_required_funds = total_sunk_per_acct * num_accounts
 
 st.sidebar.metric("Live CEX Wallet Available", f"${current_wallet:,.2f}", f"-${realized_debt:,.2f} Sunk" if realized_debt > 0 else None, delta_color="normal")
-
-if current_wallet < max_required_funds and st.session_state.phase1_status == "Pending":
-    st.sidebar.error(f"⚠️ **Underfunded for Eval!** You need at least **${max_required_funds:,.2f}** to pass.")
-
 
 # --- TABS ---
 if chal_type == "1-Step Pro":
@@ -226,6 +223,8 @@ with t1:
                 <div class="money-row"><span><b>CEX Win ({max_dd_pct*100:.0f}% Drain):</b></span><span class="money-pos">+${full_refund_disp:,.2f}</span></div>
                 <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fees_paid:,.2f}</span></div>
                 <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Farm Cash:</b></span><span class="{'money-pos' if net_full_drain>0 else 'money-neg'}">${net_full_drain:,.2f}</span></div>
+                <br>
+                <div class="money-row" style="font-size:1.1em;"><span><b>💳 Wallet After Drain:</b></span><span style="color:#FFF;"><b>${start_cap + net_full_drain:,.2f}</b></span></div>
             </div>"""
             st.markdown(card_html, unsafe_allow_html=True)
             if st.button("Phase 1 FAILED (Reset)", key="p1_fail"): st.session_state.phase1_status="Pending"; st.rerun()
@@ -304,30 +303,34 @@ with t3:
     payout_one = target_profit_amt * profit_split_pct
     
     # ---------------------------------------------------------
-    # NEW: ANTI-LIQUIDATION ENGINE & MARGIN CHECK
+    # NEW: CEX FUTURES ANTI-LIQUIDATION ENGINE
     # ---------------------------------------------------------
-    cex_margin_req = (f_metrics['cex_size'] / active_lev) * num_accounts
+    # Margin = Total Position Value / Leverage
+    cex_margin_req = (f_metrics['cex_size'] / cex_lev_in) * num_accounts
+    # Buffer = Max expected loss when Prop hits its target
     max_cex_loss = f_metrics['pass_cost'] * num_accounts
     safe_balance_needed = cex_margin_req + max_cex_loss
+    
+    shortfall = safe_balance_needed - current_wallet
 
-    if current_wallet >= safe_balance_needed:
+    if shortfall <= 0:
         safety_html = f"""
         <div class="safety-box" style="border-color: #00FF7F;">
             <h4 style="color:#00FF7F; margin-top:0;">✅ Liquidation Safety Check Passed</h4>
-            <span>To hold this trade safely, you need <b>${cex_margin_req:,.2f}</b> for Margin + <b>${max_cex_loss:,.2f}</b> to absorb the loss before Prop hits TP. Total Required: <b>${safe_balance_needed:,.2f}</b>. Your Wallet: <b>${current_wallet:,.2f}</b>.</span>
+            <span>To hold this trade safely, you need <b>${cex_margin_req:,.2f}</b> for Initial Margin ({cex_lev_in}x Lev) + <b>${max_cex_loss:,.2f}</b> to absorb the floating loss before Prop hits TP. <br>Total Required: <b>${safe_balance_needed:,.2f}</b>. Your Wallet: <b>${current_wallet:,.2f}</b>.</span>
         </div>
         """
     else:
         safety_html = f"""
         <div class="safety-box" style="border-color: #FF4B4B;">
             <h4 style="color:#FF4B4B; margin-top:0;">⚠️ DANGER: Liquidation Risk</h4>
-            <span>You need <b>${safe_balance_needed:,.2f}</b> (Margin: ${cex_margin_req:,.0f} + Loss Buffer: ${max_cex_loss:,.0f}) to hold this trade. Your wallet only has <b>${current_wallet:,.2f}</b>. <br><b>You will be force-liquidated before hitting TP. Add funds or lower your ratio.</b></span>
+            <span>You need <b>${safe_balance_needed:,.2f}</b> (Margin @ {cex_lev_in}x: ${cex_margin_req:,.0f} + Loss Buffer: ${max_cex_loss:,.0f}) to hold this trade. Your wallet only has <b>${current_wallet:,.2f}</b>. <br><br><b>❌ You are short by <span style="color:#FFD700;">${shortfall:,.2f}</span>.</b><br>Add this exact amount to your CEX or increase your leverage to avoid early liquidation.</span>
         </div>
         """
     st.markdown(safety_html, unsafe_allow_html=True)
 
     # ---------------------------------------------------------
-    # NEW: MULTI-DAY DRAIN CALCULATOR
+    # MULTI-DAY DRAIN CALCULATOR
     # ---------------------------------------------------------
     total_drain = acct_size * max_dd_pct
     days_to_drain = math.ceil(max_dd_pct / active_risk)
