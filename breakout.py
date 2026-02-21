@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v43", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v44", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -37,8 +37,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v43")
-st.caption("Update: 1-Step 'Infinite Grind' Loop Tracker")
+st.title("🛡️ Breakout Hedge Commander v44")
+st.caption("Update: Dynamic 1-Step 'Loss Per %' Scaling")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -65,11 +65,6 @@ with st.sidebar:
     chal_type = st.radio("Challenge Type", ["Standard 2-Step", "1-Step Pro"], index=["Standard 2-Step", "1-Step Pro"].index(st.session_state.chal_type))
     st.session_state.chal_type = chal_type
 
-    if chal_type == "1-Step Pro":
-        st.markdown("""<div class='farm-box'><b>Mode: 1-Step Pro (50k)</b><br>Target: 12% | Max DD: 5%<br><i>Ratio set to 0.25 ($125 loss per 1%)</i></div>""", unsafe_allow_html=True)
-    else:
-        st.markdown("""<div class='success-box'><b>Mode: Standard 2-Step</b><br>Target: 5% / 10% | Max DD: 8%</div>""", unsafe_allow_html=True)
-
     st.markdown("---")
     st.header("2. Account Configuration")
     
@@ -79,7 +74,8 @@ with st.sidebar:
     if chal_type == "1-Step Pro":
         split_choice = "90% (Pro)"
         apply_discount = True
-        if acct_choice == 50000: final_fee = 395.0
+        if acct_choice == 25000: final_fee = 220.0
+        elif acct_choice == 50000: final_fee = 395.0
         elif acct_choice == 100000: final_fee = 760.0
         else: final_fee = 220.0
         st.info(f"Fixed 1-Step Fee: ${final_fee:.2f}")
@@ -98,7 +94,7 @@ with st.sidebar:
     acct_size = acct_choice
     fee = final_fee
     profit_split_pct = 0.90 if "90%" in split_choice else 0.80
-    
+
     st.header("3. Risk Settings")
     if chal_type == "1-Step Pro":
         max_dd_pct = 0.05
@@ -125,6 +121,14 @@ with st.sidebar:
         ratio_p2 = st.number_input("P2 Ratio", min_value=0.01, max_value=5.0, value=st.session_state.ratio_p2_set, step=0.01, format="%.2f")
     else:
         ratio_p2 = 0.0
+
+    # Dynamic UI Header Display
+    if chal_type == "1-Step Pro":
+        loss_per_pct = (acct_size * 0.01) * ratio_p1
+        st.sidebar.markdown(f"""<div class='farm-box'><b>Mode: 1-Step Pro ({acct_size//1000}k)</b><br>Target: 12% | Max DD: 5%<br><i>Ratio set to {ratio_p1:.2f} <b>(${loss_per_pct:,.2f} loss per 1%)</b></i></div>""", unsafe_allow_html=True)
+    else:
+        st.sidebar.markdown("""<div class='success-box'><b>Mode: Standard 2-Step</b><br>Target: 5% / 10% | Max DD: 8%</div>""", unsafe_allow_html=True)
+
     
     st.markdown("---")
     st.header("5. Commissions")
