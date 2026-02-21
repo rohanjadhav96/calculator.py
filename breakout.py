@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v44", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v46", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -33,20 +33,17 @@ st.markdown("""
     .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
     .farm-box { background-color: #1a1a0a; padding: 10px; border-left: 3px solid #FFD700; font-size: 0.9em; color: #fffacd; margin-bottom: 10px; }
     .danger-box { background-color: #2a0a0a; padding: 10px; border-left: 3px solid #FF4B4B; font-size: 0.9em; color: #ffcccc; margin-bottom: 10px; }
-    .ev-box { background-color: #0d1b2a; border: 1px solid #1b263b; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v44")
-st.caption("Update: Dynamic 1-Step 'Loss Per %' Scaling")
+st.title("🛡️ Breakout Hedge Commander v46")
+st.caption("Clean Build: Core Features & Live CEX Ledger")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("1. Choose Your Mode")
     
-    # PRESET BUTTONS
     c_farm, c_1step = st.columns(2)
-    
     if c_farm.button("💸 2-STEP"):
         st.session_state.chal_type = "Standard 2-Step"
         st.session_state.risk_p1 = 4.5
@@ -54,7 +51,6 @@ with st.sidebar:
         st.session_state.ratio_p1_set = 0.24
         st.session_state.ratio_p2_set = 0.32
         st.rerun()
-
     if c_1step.button("🎯 1-STEP (0.25)"):
         st.session_state.chal_type = "1-Step Pro"
         st.session_state.risk_p1 = 2.5
@@ -122,14 +118,12 @@ with st.sidebar:
     else:
         ratio_p2 = 0.0
 
-    # Dynamic UI Header Display
     if chal_type == "1-Step Pro":
         loss_per_pct = (acct_size * 0.01) * ratio_p1
         st.sidebar.markdown(f"""<div class='farm-box'><b>Mode: 1-Step Pro ({acct_size//1000}k)</b><br>Target: 12% | Max DD: 5%<br><i>Ratio set to {ratio_p1:.2f} <b>(${loss_per_pct:,.2f} loss per 1%)</b></i></div>""", unsafe_allow_html=True)
     else:
         st.sidebar.markdown("""<div class='success-box'><b>Mode: Standard 2-Step</b><br>Target: 5% / 10% | Max DD: 8%</div>""", unsafe_allow_html=True)
 
-    
     st.markdown("---")
     st.header("5. Commissions")
     prop_comm_rate = st.number_input("Prop Commission (%)", 0.04, format="%.4f") / 100
@@ -171,11 +165,35 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage):
 p1 = calculate_metrics(acct_size * target_p1_pct, ratio_p1, risk_p1_in, lev_p1_in)
 
 # Track Sunk Cost Dynamically
+total_sunk_per_acct = fee + p1['pass_cost']
 if chal_type != "1-Step Pro":
     p2 = calculate_metrics(acct_size * target_p2_pct, ratio_p2, risk_p2_in, lev_p2_in)
-    total_sunk = fee + p1['pass_cost'] + p2['pass_cost']
+    total_sunk_per_acct += p2['pass_cost']
+
+# --- NEW: WALLET LEDGER LOGIC ---
+st.sidebar.markdown("---")
+st.sidebar.header("💳 Live CEX Wallet Ledger")
+if 'starting_capital' not in st.session_state: st.session_state.starting_capital = 5000.0
+start_cap = st.sidebar.number_input("Starting CEX Balance ($)", min_value=100.0, value=st.session_state.starting_capital, step=500.0)
+st.session_state.starting_capital = start_cap
+
+# Calculate active realized debt based on current phase
+realized_debt = 0.0
+if st.session_state.phase1_status == "Passed":
+    realized_debt += (fee + p1['pass_cost']) * num_accounts
+if chal_type != "1-Step Pro" and st.session_state.phase2_status == "Passed":
+    realized_debt += p2['pass_cost'] * num_accounts
+
+current_wallet = start_cap - realized_debt
+max_required_funds = total_sunk_per_acct * num_accounts
+
+st.sidebar.metric("Current Available Capital", f"${current_wallet:,.2f}", f"-${realized_debt:,.2f}" if realized_debt > 0 else None, delta_color="normal")
+
+if current_wallet < max_required_funds:
+    st.sidebar.error(f"⚠️ **Underfunded!** You need at least **${max_required_funds:,.2f}** to safely pass all evaluations.")
 else:
-    total_sunk = fee + p1['pass_cost']
+    st.sidebar.success(f"✅ **Fully Funded.** You have enough capital to reach the Funded phase (Requires ${max_required_funds:,.2f}).")
+
 
 # --- TABS ---
 if chal_type == "1-Step Pro":
@@ -199,6 +217,7 @@ with t1:
         col_pass, col_fail = st.columns(2)
         with col_pass:
             st.info(f"Hedge Loss if Pass: -${pass_cost_disp:,.2f}")
+            st.markdown(f"**Wallet After Pass:** <span style='color:#ccc;'>${start_cap - fees_paid - pass_cost_disp:,.2f}</span>", unsafe_allow_html=True)
             if st.button("Phase 1 PASSED", key="p1_pass"): st.session_state.phase1_status="Passed"; st.rerun()
         
         with col_fail:
@@ -208,6 +227,8 @@ with t1:
                 <div class="money-row"><span><b>CEX Win ({max_dd_pct*100:.0f}% Drain):</b></span><span class="money-pos">+${full_refund_disp:,.2f}</span></div>
                 <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fees_paid:,.2f}</span></div>
                 <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Farm Cash:</b></span><span class="{'money-pos' if net_full_drain>0 else 'money-neg'}">${net_full_drain:,.2f}</span></div>
+                <br>
+                <div class="money-row" style="font-size:1.1em;"><span><b>💳 Wallet After Drain:</b></span><span style="color:#FFF;"><b>${start_cap + net_full_drain:,.2f}</b></span></div>
             </div>"""
             st.markdown(card_html, unsafe_allow_html=True)
             if st.button("Phase 1 FAILED (Reset)", key="p1_fail"): st.session_state.phase1_status="Pending"; st.rerun()
@@ -223,7 +244,7 @@ with t1:
         st.markdown(html_p1, unsafe_allow_html=True)
         if st.button("Undo Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
 
-# === PHASE 2 (RESTORED) ===
+# === PHASE 2 ===
 if chal_type != "1-Step Pro":
     with t2:
         if st.session_state.phase1_status != "Passed":
@@ -239,53 +260,30 @@ if chal_type != "1-Step Pro":
                 col_pass, col_fail = st.columns(2)
                 with col_pass:
                     st.info(f"Hedge Loss if Pass: -${pass_cost_disp:,.2f}")
+                    st.markdown(f"**Wallet After Pass:** <span style='color:#ccc;'>${current_wallet - pass_cost_disp:,.2f}</span>", unsafe_allow_html=True)
                     if st.button("Phase 2 PASSED", key="p2_pass"): st.session_state.phase2_status="Passed"; st.rerun()
                 with col_fail:
                     st.error(f"Refund if Fail (Full DD): +${fail_refund_disp:,.2f}")
+                    st.markdown(f"**Wallet After Fail:** <span style='color:#ccc;'>${current_wallet + fail_refund_disp:,.2f}</span>", unsafe_allow_html=True)
                     if st.button("Phase 2 FAILED", key="p2_fail"): st.session_state.phase2_status="Failed"; st.rerun()
 
             elif st.session_state.phase2_status == "Passed":
-                fee_total = fee * num_accounts
-                p1_cost_total = p1['pass_cost'] * num_accounts
-                p2_cost_total = p2['pass_cost'] * num_accounts
-                total_inv_total = total_sunk * num_accounts
-                
                 html_p2 = f"""
                 <div class="result-card" style="border-left: 5px solid #00FF7F;">
                     <div class="pass-header">🏆 YOU ARE FUNDED</div>
-                    <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fee_total:,.2f}</span></div>
-                    <div class="money-row"><span>Phase 1 Hedge:</span><span class="money-neg">-${p1_cost_total:,.2f}</span></div>
-                    <div class="money-row"><span>Phase 2 Hedge:</span><span class="money-neg">-${p2_cost_total:,.2f}</span></div>
-                    <div class="total-row"><span>TOTAL INVESTMENT (DEBT):</span><span class="money-neg">-${total_inv_total:,.2f}</span></div>
+                    <div class="total-row"><span>TOTAL INVESTMENT (DEBT):</span><span class="money-neg">-${realized_debt:,.2f}</span></div>
                 </div>"""
                 st.markdown(html_p2, unsafe_allow_html=True)
                 if st.button("Undo Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
 
-            elif st.session_state.phase2_status == "Failed":
-                fee_total = fee * num_accounts
-                p1_cost_total = p1['pass_cost'] * num_accounts
-                total_sunk_prev = fee_total + p1_cost_total
-                net_res_disp = fail_refund_disp - total_sunk_prev
-                
-                html_f2 = f"""
-                <div class="result-card" style="border-left: 5px solid #FF4B4B;">
-                    <div class="fail-header">❌ Phase 2 Failed</div>
-                    <div class="money-row"><span>Total Refund:</span><span class="money-pos">+${fail_refund_disp:,.2f}</span></div>
-                    <div class="money-row"><span>Fees Paid:</span><span class="money-neg">-${fee_total:,.2f}</span></div>
-                    <div class="money-row"><span>Phase 1 Hedge:</span><span class="money-neg">-${p1_cost_total:,.2f}</span></div>
-                    <div class="total-row"><span>NET RESULT:</span><span class="{'money-pos' if net_res_disp>0 else 'money-neg'}">${net_res_disp:,.2f}</span></div>
-                </div>"""
-                st.markdown(html_f2, unsafe_allow_html=True)
-                if st.button("Restart Phase 2"): st.session_state.phase2_status="Pending"; st.rerun()
-
-# === FUNDED (DYNAMIC FOR BOTH MODES) ===
+# === FUNDED ===
 with t3:
     st.markdown("<div class='big-header'>Funded Phase Execution</div>", unsafe_allow_html=True)
     
     if chal_type == "1-Step Pro":
         st.markdown(f"""
         <div class='info-box'>
-        <b>The Infinite Grind Loop:</b> You are in a -${total_sunk:,.0f} hole. If you win (Scenario A), you extract pure cash to reload the CEX and chip away at the debt. If you fail (Scenario B), you extract the big drain to clear the debt and walk away in profit.
+        <b>The Infinite Grind Loop:</b> You are in a -${realized_debt:,.0f} hole. If you win (Scenario A), you extract pure cash to reload the CEX. If you fail (Scenario B), you extract the big drain to clear the debt.
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -295,10 +293,9 @@ with t3:
 
     target_profit_amt = st.number_input("Target Withdrawal Amount (Per Account):", value=4000.0, step=100.0)
     
-    # Tool: Auto-Breakeven
     if st.button("🧪 Calculate Auto-Breakeven Ratio"):
         full_drain = acct_size * max_dd_pct
-        safe_ratio = total_sunk / full_drain
+        safe_ratio = realized_debt / full_drain
         st.session_state.funded_ratio = safe_ratio
         st.success(f"Ratio updated to {safe_ratio:.2f}")
 
@@ -306,84 +303,51 @@ with t3:
     f_ratio = st.slider("Funded Hedge Ratio (Multiplier)", 0.1, 1.5, st.session_state.funded_ratio, 0.01)
     st.session_state.funded_ratio = f_ratio
 
-    # Calculate Funded Metrics based on whichever phase risk is active
     active_risk = risk_p1_in if chal_type == "1-Step Pro" else risk_p2_in
     active_lev = lev_p1_in if chal_type == "1-Step Pro" else lev_p2_in
     
     f_metrics = calculate_metrics(target_profit_amt, f_ratio, active_risk, active_lev)
     payout_one = target_profit_amt * profit_split_pct
     
-    # Drain logic
     total_drain = acct_size * max_dd_pct
     cex_fric_fail = (f_metrics['cex_size'] * (max_dd_pct / active_risk) * cex_comm_rate * 2)
     cex_win_net_drain = (total_drain * f_ratio) - cex_fric_fail
     
-    net_trade_cash_win = payout_one - f_metrics['pass_cost']
-    net_trade_cash_fail = cex_win_net_drain
+    # Per account calculations mapped to total active accounts
+    net_trade_cash_win_total = (payout_one - f_metrics['pass_cost']) * num_accounts
+    net_trade_cash_fail_total = cex_win_net_drain * num_accounts
     
-    net_fail_one = cex_win_net_drain - total_sunk
-    net_win_one = net_trade_cash_win - total_sunk
+    net_fail_total = net_trade_cash_fail_total - realized_debt
+    net_win_total = net_trade_cash_win_total - realized_debt
+    
+    wallet_after_win = current_wallet + net_trade_cash_win_total
+    wallet_after_fail = current_wallet + net_trade_cash_fail_total
 
     c1, c2 = st.columns(2)
     
-    if chal_type == "1-Step Pro":
-        with c1:
-            st.markdown(f"""
-            <div class="result-card" style="border: 1px solid #FFD700;">
-                <div class="pass-header" style="color:#FFD700;">SCENARIO A: ACCIDENTAL WIN (RELOAD)</div>
-                <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_one:,.2f}</span></div>
-                <div class="money-row"><span>Trade Hedge Loss:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
-                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash (Wallet):</b></span><span class="{'money-pos' if net_trade_cash_win>0 else 'money-neg'}">+${net_trade_cash_win:,.2f}</span></div>
-                <br>
-                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-                <div class="total-row"><span>REMAINING DEBT:</span><span class="{'money-pos' if net_win_one>0 else 'money-neg'}">${net_win_one:,.2f}</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"""
-            <div class="result-card" style="border: 1px solid #FF4B4B;">
-                <div class="fail-header">SCENARIO B: FINAL DRAIN (EXIT)</div>
-                <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${cex_win_net_drain:,.2f}</span></div>
-                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash:</b></span><span class="{'money-pos' if net_trade_cash_fail>0 else 'money-neg'}">+${net_trade_cash_fail:,.2f}</span></div>
-                <br>
-                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-                <div class="total-row"><span>FINAL EXIT NET:</span><span class="{'money-pos' if net_fail_one>0 else 'money-neg'}">${net_fail_one:,.2f}</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        with c1:
-            st.markdown(f"""
-            <div class="result-card" style="border: 1px solid #00FF7F;">
-                <div class="pass-header">SCENARIO A: WIN & WITHDRAW</div>
-                <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_one:,.2f}</span></div>
-                <div class="money-row"><span>Trade Hedge Loss:</span><span class="money-neg">-${f_metrics['pass_cost']:,.2f}</span></div>
-                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash:</b></span><span class="{'money-pos' if net_trade_cash_win>0 else 'money-neg'}">+${net_trade_cash_win:,.2f}</span></div>
-                <br>
-                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-                <div class="total-row"><span>LIFETIME NET:</span><span class="{'money-pos' if net_win_one>0 else 'money-neg'}">${net_win_one:,.2f}</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"""
-            <div class="result-card" style="border: 1px solid #FF4B4B;">
-                <div class="fail-header">SCENARIO B: FAIL & DRAIN</div>
-                <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${cex_win_net_drain:,.2f}</span></div>
-                <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash:</b></span><span class="{'money-pos' if net_trade_cash_fail>0 else 'money-neg'}">+${net_trade_cash_fail:,.2f}</span></div>
-                <br>
-                <div class="money-row"><span>Eval Sunk Cost:</span><span class="money-neg">-${total_sunk:,.2f}</span></div>
-                <div class="total-row"><span>LIFETIME NET:</span><span class="{'money-pos' if net_fail_one>0 else 'money-neg'}">${net_fail_one:,.2f}</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-    # --- EXPECTED VALUE (EV) CALCULATOR ---
-    st.markdown("---")
-    expected_value = (net_win_one * 0.50) + (net_fail_one * 0.50)
-    
-    st.markdown(f"""
-    <div class="ev-box">
-        <h3 style="color:#FFF;">Single-Trade Expected Value (EV)</h3>
-        <p style="color:#ccc; font-size:14px;">If you flip a coin on this exact setup, what is the mathematical average profit?</p>
-        <h2 style="color:{'#00FF7F' if expected_value > 0 else '#FF4B4B'};">Average Outcome: ${expected_value:,.2f}</h2>
-        <p style="color:#888; font-size:12px;">Calculation: (Lifetime Win Net × 50%) + (Lifetime Fail Net × 50%)</p>
-    </div>
-    """, unsafe_allow_html=True)
+    win_title = "SCENARIO A: ACCIDENTAL WIN (RELOAD)" if chal_type == "1-Step Pro" else "SCENARIO A: WIN & WITHDRAW"
+    fail_title = "SCENARIO B: FINAL DRAIN (EXIT)" if chal_type == "1-Step Pro" else "SCENARIO B: FAIL & DRAIN"
+
+    with c1:
+        st.markdown(f"""
+        <div class="result-card" style="border: 1px solid #FFD700;">
+            <div class="pass-header" style="color:#FFD700;">{win_title}</div>
+            <div class="money-row"><span>Payout ({profit_split_pct*100:.0f}%):</span><span class="money-pos">+${payout_one * num_accounts:,.2f}</span></div>
+            <div class="money-row"><span>Trade Hedge Loss:</span><span class="money-neg">-${f_metrics['pass_cost'] * num_accounts:,.2f}</span></div>
+            <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash Flow:</b></span><span class="{'money-pos' if net_trade_cash_win_total>0 else 'money-neg'}">+${net_trade_cash_win_total:,.2f}</span></div>
+            <br>
+            <div class="money-row" style="font-size:1.1em;"><span><b>💳 Wallet After Win:</b></span><span style="color:#FFF;"><b>${wallet_after_win:,.2f}</b></span></div>
+            <div class="total-row"><span>LIFETIME NET (Vs Debt):</span><span class="{'money-pos' if net_win_total>0 else 'money-neg'}">${net_win_total:,.2f}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="result-card" style="border: 1px solid #FF4B4B;">
+            <div class="fail-header">{fail_title}</div>
+            <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD):</span><span class="money-pos">+${net_trade_cash_fail_total:,.2f}</span></div>
+            <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash Flow:</b></span><span class="{'money-pos' if net_trade_cash_fail_total>0 else 'money-neg'}">+${net_trade_cash_fail_total:,.2f}</span></div>
+            <br>
+            <div class="money-row" style="font-size:1.1em;"><span><b>💳 Wallet After Drain:</b></span><span style="color:#FFF;"><b>${wallet_after_fail:,.2f}</b></span></div>
+            <div class="total-row"><span>LIFETIME NET (Vs Debt):</span><span class="{'money-pos' if net_fail_total>0 else 'money-neg'}">${net_fail_total:,.2f}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
