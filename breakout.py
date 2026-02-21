@@ -3,7 +3,7 @@ import pandas as pd
 import math
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v48", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v49", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -37,8 +37,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v48")
-st.caption("Update: Independent CEX Leverage & Margin Shortfall Calculator")
+st.title("🛡️ Breakout Hedge Commander v49")
+st.caption("Update: 200k Account Tier Integration")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -66,23 +66,27 @@ with st.sidebar:
     st.header("2. Account Configuration")
     
     num_accounts = st.number_input("Active Accounts (Multiplier)", min_value=1, max_value=50, value=1)
-    acct_choice = st.selectbox("Select Account Size", [25000, 50000, 100000], index=1)
+    # NEW: 200k Option added here
+    acct_choice = st.selectbox("Select Account Size", [25000, 50000, 100000, 200000], index=1)
     
     if chal_type == "1-Step Pro":
         split_choice = "90% (Pro)"
         apply_discount = True
+        # NEW: 200k Fee Logic
         if acct_choice == 25000: final_fee = 220.0
         elif acct_choice == 50000: final_fee = 395.0
-        elif acct_choice == 100000: final_fee = 760.0
-        else: final_fee = 220.0
+        elif acct_choice == 100000: final_fee = 754.0
+        elif acct_choice == 200000: final_fee = 1510.0
         st.info(f"Fixed 1-Step Fee: ${final_fee:.2f}")
     else:
         split_choice = st.radio("Profit Split", ["90% (Pro)", "80% (Standard)"], horizontal=True)
-        apply_discount = st.checkbox("Apply 2% Discount Code?", value=False)
+        apply_discount = st.checkbox("Apply 2% Discount Code?", value=True)
         
-        if acct_choice == 25000: base_fee = 250; add_on = 25
-        elif acct_choice == 50000: base_fee = 450; add_on = 45
-        elif acct_choice == 100000: base_fee = 750; add_on = 75
+        # NEW: Base fee math structured to yield exactly $754 and $1510 on 90% + discount
+        if acct_choice == 25000: base_fee = 250.0; add_on = 25.0
+        elif acct_choice == 50000: base_fee = 450.0; add_on = 45.0
+        elif acct_choice == 100000: base_fee = 699.44; add_on = 69.95
+        elif acct_choice == 200000: base_fee = 1400.74; add_on = 140.08
             
         raw_fee = base_fee + add_on if "90%" in split_choice else base_fee
         final_fee = raw_fee * 0.98 if apply_discount else raw_fee
@@ -125,7 +129,7 @@ with st.sidebar:
         loss_per_pct = (acct_size * 0.01) * ratio_p1
         st.sidebar.markdown(f"""<div class='farm-box'><b>Mode: 1-Step Pro ({acct_size//1000}k)</b><br>Target: 12% | Max DD: 5%<br><i>Ratio set to {ratio_p1:.2f} <b>(${loss_per_pct:,.2f} loss per 1%)</b></i></div>""", unsafe_allow_html=True)
     else:
-        st.sidebar.markdown("""<div class='success-box'><b>Mode: Standard 2-Step</b><br>Target: 5% / 10% | Max DD: 8%</div>""", unsafe_allow_html=True)
+        st.sidebar.markdown(f"""<div class='success-box'><b>Mode: Standard 2-Step ({acct_size//1000}k)</b><br>Target: 5% / 10% | Max DD: 8%</div>""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.header("5. Commissions")
@@ -303,11 +307,9 @@ with t3:
     payout_one = target_profit_amt * profit_split_pct
     
     # ---------------------------------------------------------
-    # NEW: CEX FUTURES ANTI-LIQUIDATION ENGINE
+    # CEX FUTURES ANTI-LIQUIDATION ENGINE
     # ---------------------------------------------------------
-    # Margin = Total Position Value / Leverage
     cex_margin_req = (f_metrics['cex_size'] / cex_lev_in) * num_accounts
-    # Buffer = Max expected loss when Prop hits its target
     max_cex_loss = f_metrics['pass_cost'] * num_accounts
     safe_balance_needed = cex_margin_req + max_cex_loss
     
