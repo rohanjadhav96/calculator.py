@@ -100,6 +100,7 @@ with st.container():
         instrument_mode = st.selectbox(
             "Select Instrument / View:",
             [
+                "Compare All: NQ & ES",
                 "Compare: Nasdaq (NQ & MNQ)",
                 "Compare: S&P 500 (ES & MES)",
                 "---",
@@ -113,12 +114,15 @@ with st.container():
         calc_mode = st.radio("Mode:", ["Risk Based ($)", "Manual Qty"], horizontal=True)
 
     # Determine View & Data
-    if "Compare: Nasdaq" in instrument_mode:
+    if "Compare All" in instrument_mode:
+        view_mode = "All"
+        data = None
+    elif "Compare: Nasdaq" in instrument_mode:
         view_mode = "Comparison"
-        data = {"mini":"NQ", "micro":"MNQ", "mini_val":20, "micro_val":2}
+        data = {"mini": "NQ", "micro": "MNQ", "mini_val": 20, "micro_val": 2}
     elif "Compare: S&P" in instrument_mode:
         view_mode = "Comparison"
-        data = {"mini":"ES", "micro":"MES", "mini_val":50, "micro_val":5}
+        data = {"mini": "ES", "micro": "MES", "mini_val": 50, "micro_val": 5}
     elif "---" in instrument_mode:
         st.warning("Please select an instrument.")
         st.stop()
@@ -132,7 +136,6 @@ with st.container():
     # Row 2: Trade Parameters (SL, TP, Risk/Qty)
     st.markdown("---")
     
-    # We create 3 columns. The 3rd column changes based on "Risk" vs "Manual" mode.
     col_sl, col_tp, col_input = st.columns(3)
     
     with col_sl:
@@ -140,35 +143,48 @@ with st.container():
     with col_tp:
         tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
     
-    # Logic for Column 3
+    # Initialize quantity variables
     user_risk_input = 0
     q_mini, q_micro, q_single = 0, 0, 0
+    q_nq, q_mnq, q_es, q_mes = 0, 0, 0, 0
     
     with col_input:
         if "Risk Based" in calc_mode:
             rec_risk = min(500.0, float(risk_budget))
             user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
             
-            # Perform Calc immediately to keep logic clean
-            if view_mode == "Comparison":
+            # Perform Calc immediately
+            if view_mode == "All":
+                q_nq = math.floor(user_risk_input / (sl_pts * 20))
+                q_mnq = math.floor(user_risk_input / (sl_pts * 2))
+                q_es = math.floor(user_risk_input / (sl_pts * 50))
+                q_mes = math.floor(user_risk_input / (sl_pts * 5))
+            elif view_mode == "Comparison":
                 q_mini = math.floor(user_risk_input / (sl_pts * data["mini_val"]))
                 q_micro = math.floor(user_risk_input / (sl_pts * data["micro_val"]))
             else:
                 q_single = math.floor(user_risk_input / (sl_pts * data["val"]))
         else:
-            # Manual Qty Mode
-            if view_mode == "Comparison":
-                st.caption("Manual Qty Input Below 👇") # Placeholder as we need 2 inputs for comparison
+            # Manual Qty Mode setup
+            if view_mode in ["Comparison", "All"]:
+                st.caption("Manual Qty Input Below 👇") 
                 user_risk_input = float('inf') 
             else:
                 q_single = st.number_input("Quantity:", 1, 1000, 1)
                 user_risk_input = float('inf')
 
-    # Special Case: Manual Mode + Comparison needs a 4th row because we can't fit 2 inputs in 1 column easily
-    if "Manual" in calc_mode and view_mode == "Comparison":
-        c_q1, c_q2 = st.columns(2)
-        with c_q1: q_mini = st.number_input(f"Qty {data['mini']}", 0, 100, 1)
-        with c_q2: q_micro = st.number_input(f"Qty {data['micro']}", 0, 1000, 1)
+    # Special Case: Manual Mode for multiple inputs
+    if "Manual" in calc_mode:
+        if view_mode == "All":
+            c_q1, c_q2, c_q3, c_q4 = st.columns(4)
+            with c_q1: q_nq = st.number_input("Qty NQ", 0, 100, 1)
+            with c_q2: q_mnq = st.number_input("Qty MNQ", 0, 1000, 1)
+            with c_q3: q_es = st.number_input("Qty ES", 0, 100, 1)
+            with c_q4: q_mes = st.number_input("Qty MES", 0, 1000, 1)
+        elif view_mode == "Comparison":
+            c_q1, c_q2 = st.columns(2)
+            with c_q1: q_mini = st.number_input(f"Qty {data['mini']}", 0, 100, 1)
+            with c_q2: q_micro = st.number_input(f"Qty {data['micro']}", 0, 1000, 1)
 
 
 # --- 3. CALCULATION ENGINE ---
@@ -210,63 +226,46 @@ def check_violations(stats, limit_qty):
 # --- 4. RENDER RESULTS ---
 st.divider()
 
-if view_mode == "Comparison":
-    stats_mini = calculate_stats(q_mini, data["mini_val"], False)
-    stats_micro = calculate_stats(q_micro, data["micro_val"], True)
+def render_card(title, icon, qty, point_val, is_micro):
+    """Helper function to cleanly render any instrument's stats block."""
+    st.subheader(f"{icon} {title}")
+    stats = calculate_stats(qty, point_val, is_micro)
+    limit = defaults["max_micros"] if is_micro else defaults["max_minis"]
     
-    warn_mini = check_violations(stats_mini, defaults["max_minis"])
-    warn_micro = check_violations(stats_micro, defaults["max_micros"])
+    if stats:
+        warns = check_violations(stats, limit)
+        if warns:
+            for w in warns: st.error(w)
+        else:
+            st.success("✅ Trade Approved")
+            
+        c1, c2 = st.columns(2)
+        c1.metric("Risk", f"-${stats['net_risk']:,.2f}")
+        c2.metric("Profit", f"+${stats['net_reward']:,.2f}")
+        st.info(f"Size: **{stats['qty']}**")
+    else:
+        st.warning(get_rejection_reason(sl_pts, point_val, user_risk_input, risk_budget))
 
+
+# Execute Layout based on View Mode
+if view_mode == "All":
+    # NQ / MNQ Row
+    col_nq, col_mnq = st.columns(2)
+    with col_nq: render_card("NQ (Mini)", "🦁", q_nq, 20, False)
+    with col_mnq: render_card("MNQ (Micro)", "🐭", q_mnq, 2, True)
+    
+    st.divider()
+    
+    # ES / MES Row
+    col_es, col_mes = st.columns(2)
+    with col_es: render_card("ES (Mini)", "🦅", q_es, 50, False)
+    with col_mes: render_card("MES (Micro)", "🐥", q_mes, 5, True)
+
+elif view_mode == "Comparison":
     col_a, col_b = st.columns(2)
-    
-    # Mini Card
-    with col_a:
-        st.subheader(f"🦁 {data['mini']} (Mini)")
-        if stats_mini:
-            if warn_mini:
-                for w in warn_mini: st.error(w)
-            else:
-                st.success("✅ Trade Approved")
-            
-            c_res1, c_res2 = st.columns(2)
-            c_res1.metric("Risk", f"-${stats_mini['net_risk']:,.2f}")
-            c_res2.metric("Profit", f"+${stats_mini['net_reward']:,.2f}")
-            st.info(f"Size: **{stats_mini['qty']}**")
-        else:
-            st.warning(get_rejection_reason(sl_pts, data["mini_val"], user_risk_input, risk_budget))
-
-    # Micro Card
-    with col_b:
-        st.subheader(f"🐭 {data['micro']} (Micro)")
-        if stats_micro:
-            if warn_micro:
-                for w in warn_micro: st.error(w)
-            else:
-                st.success("✅ Trade Approved")
-            
-            c_res1, c_res2 = st.columns(2)
-            c_res1.metric("Risk", f"-${stats_micro['net_risk']:,.2f}")
-            c_res2.metric("Profit", f"+${stats_micro['net_reward']:,.2f}")
-            st.info(f"Size: **{stats_micro['qty']}**")
-        else:
-            st.warning(get_rejection_reason(sl_pts, data["micro_val"], user_risk_input, risk_budget))
+    with col_a: render_card(f"{data['mini']} (Mini)", "🦁", q_mini, data["mini_val"], False)
+    with col_b: render_card(f"{data['micro']} (Micro)", "🐭", q_micro, data["micro_val"], True)
 
 else:
     # Single View
-    limit = defaults["max_minis"] if data["type"] == "mini" else defaults["max_micros"]
-    stats = calculate_stats(q_single, data["val"], data["type"] == "micro")
-    
-    st.subheader(f"📊 {data['name']} Analysis")
-    if stats:
-        warnings = check_violations(stats, limit)
-        if warnings:
-            for w in warnings: st.error(w)
-        else:
-            st.success("✅ Trade Rules Passed")
-            
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Net Risk", f"-${stats['net_risk']:,.2f}")
-        m2.metric("Net Profit", f"+${stats['net_reward']:,.2f}")
-        m3.metric("Size", f"{stats['qty']} Contracts")
-    else:
-        st.warning(get_rejection_reason(sl_pts, data["val"], user_risk_input, risk_budget))
+    render_card(f"{data['name']} Analysis", "📊", q_single, data["val"], data["type"] == "micro")
