@@ -136,44 +136,58 @@ with st.container():
     # Row 2: Trade Parameters (SL, TP, Risk/Qty)
     st.markdown("---")
     
-    col_sl, col_tp, col_input = st.columns(3)
-    
-    with col_sl:
-        sl_pts = st.number_input("Stop Loss (Points):", 1.0, 500.0, 10.0, 0.5)
-    with col_tp:
-        tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.5)
-    
     # Initialize quantity variables
     user_risk_input = 0
     q_mini, q_micro, q_single = 0, 0, 0
     q_nq, q_mnq, q_es, q_mes = 0, 0, 0, 0
     
-    with col_input:
-        if "Risk Based" in calc_mode:
-            rec_risk = min(500.0, float(risk_budget))
-            user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
-            
-            # Perform Calc immediately
-            if view_mode == "All":
-                q_nq = math.floor(user_risk_input / (sl_pts * 20))
-                q_mnq = math.floor(user_risk_input / (sl_pts * 2))
-                q_es = math.floor(user_risk_input / (sl_pts * 50))
-                q_mes = math.floor(user_risk_input / (sl_pts * 5))
-            elif view_mode == "Comparison":
-                q_mini = math.floor(user_risk_input / (sl_pts * data["mini_val"]))
-                q_micro = math.floor(user_risk_input / (sl_pts * data["micro_val"]))
+    if view_mode == "All":
+        # Split into 5 columns for NQ params, ES params, and Risk
+        c_sl1, c_tp1, c_sl2, c_tp2, c_risk = st.columns([1, 1, 1, 1, 1.2])
+        with c_sl1: sl_nq = st.number_input("NQ Stop (Pts)", 1.0, 500.0, 10.0, 0.5)
+        with c_tp1: tp_nq = st.number_input("NQ Target (Pts)", 1.0, 1000.0, 20.0, 0.5)
+        with c_sl2: sl_es = st.number_input("ES Stop (Pts)", 1.0, 500.0, 4.0, 0.25)
+        with c_tp2: tp_es = st.number_input("ES Target (Pts)", 1.0, 1000.0, 8.0, 0.25)
+        
+        with c_risk:
+            if "Risk Based" in calc_mode:
+                rec_risk = min(500.0, float(risk_budget))
+                user_risk_input = st.number_input("Risk Amount ($)", 50.0, 10000.0, rec_risk, 10.0)
+                q_nq = math.floor(user_risk_input / (sl_nq * 20))
+                q_mnq = math.floor(user_risk_input / (sl_nq * 2))
+                q_es = math.floor(user_risk_input / (sl_es * 50))
+                q_mes = math.floor(user_risk_input / (sl_es * 5))
             else:
-                q_single = math.floor(user_risk_input / (sl_pts * data["val"]))
-        else:
-            # Manual Qty Mode setup
-            if view_mode in ["Comparison", "All"]:
-                st.caption("Manual Qty Input Below 👇") 
-                user_risk_input = float('inf') 
-            else:
-                q_single = st.number_input("Quantity:", 1, 1000, 1)
+                st.caption("Manual Qty Selected 👇")
                 user_risk_input = float('inf')
 
-    # Special Case: Manual Mode for multiple inputs
+    else:
+        # Standard 3 column layout for Single/Standard Comparison
+        col_sl, col_tp, col_input = st.columns(3)
+        with col_sl:
+            sl_pts = st.number_input("Stop Loss (Points):", 1.0, 500.0, 10.0, 0.25)
+        with col_tp:
+            tp_pts = st.number_input("Take Profit (Points):", 1.0, 1000.0, 20.0, 0.25)
+        
+        with col_input:
+            if "Risk Based" in calc_mode:
+                rec_risk = min(500.0, float(risk_budget))
+                user_risk_input = st.number_input("Willing to Risk ($):", 50.0, 10000.0, rec_risk, 10.0)
+                
+                if view_mode == "Comparison":
+                    q_mini = math.floor(user_risk_input / (sl_pts * data["mini_val"]))
+                    q_micro = math.floor(user_risk_input / (sl_pts * data["micro_val"]))
+                else:
+                    q_single = math.floor(user_risk_input / (sl_pts * data["val"]))
+            else:
+                if view_mode == "Comparison":
+                    st.caption("Manual Qty Input Below 👇") 
+                    user_risk_input = float('inf') 
+                else:
+                    q_single = st.number_input("Quantity:", 1, 1000, 1)
+                    user_risk_input = float('inf')
+
+    # Special Case: Manual Mode input rows
     if "Manual" in calc_mode:
         if view_mode == "All":
             c_q1, c_q2, c_q3, c_q4 = st.columns(4)
@@ -188,18 +202,18 @@ with st.container():
 
 
 # --- 3. CALCULATION ENGINE ---
-def calculate_stats(qty, point_val, is_micro):
+def calculate_stats(qty, point_val, is_micro, active_sl, active_tp):
     if qty == 0: return None
-    gross_risk = qty * sl_pts * point_val
-    gross_reward = qty * tp_pts * point_val
+    gross_risk = qty * active_sl * point_val
+    gross_reward = qty * active_tp * point_val
     comm = (COMMISSIONS["micro"] if is_micro else COMMISSIONS["mini"]) * qty if use_commissions else 0
     return {
         "qty": qty, "net_risk": gross_risk + comm, 
         "net_reward": gross_reward - comm, "gross": gross_reward
     }
 
-def get_rejection_reason(sl, val, user_risk, account_budget):
-    one_contract_risk = sl * val
+def get_rejection_reason(active_sl, val, user_risk, account_budget):
+    one_contract_risk = active_sl * val
     if one_contract_risk > account_budget:
         return f"Insufficient Funds: 1 contract risks ${one_contract_risk:,.2f} but you only have ${account_budget:,.2f}."
     elif one_contract_risk > user_risk:
@@ -226,10 +240,10 @@ def check_violations(stats, limit_qty):
 # --- 4. RENDER RESULTS ---
 st.divider()
 
-def render_card(title, icon, qty, point_val, is_micro):
+def render_card(title, icon, qty, point_val, is_micro, active_sl, active_tp):
     """Helper function to cleanly render any instrument's stats block."""
     st.subheader(f"{icon} {title}")
-    stats = calculate_stats(qty, point_val, is_micro)
+    stats = calculate_stats(qty, point_val, is_micro, active_sl, active_tp)
     limit = defaults["max_micros"] if is_micro else defaults["max_minis"]
     
     if stats:
@@ -244,28 +258,28 @@ def render_card(title, icon, qty, point_val, is_micro):
         c2.metric("Profit", f"+${stats['net_reward']:,.2f}")
         st.info(f"Size: **{stats['qty']}**")
     else:
-        st.warning(get_rejection_reason(sl_pts, point_val, user_risk_input, risk_budget))
+        st.warning(get_rejection_reason(active_sl, point_val, user_risk_input, risk_budget))
 
 
 # Execute Layout based on View Mode
 if view_mode == "All":
     # NQ / MNQ Row
     col_nq, col_mnq = st.columns(2)
-    with col_nq: render_card("NQ (Mini)", "🦁", q_nq, 20, False)
-    with col_mnq: render_card("MNQ (Micro)", "🐭", q_mnq, 2, True)
+    with col_nq: render_card("NQ (Mini)", "🦁", q_nq, 20, False, sl_nq, tp_nq)
+    with col_mnq: render_card("MNQ (Micro)", "🐭", q_mnq, 2, True, sl_nq, tp_nq)
     
     st.divider()
     
     # ES / MES Row
     col_es, col_mes = st.columns(2)
-    with col_es: render_card("ES (Mini)", "🦅", q_es, 50, False)
-    with col_mes: render_card("MES (Micro)", "🐥", q_mes, 5, True)
+    with col_es: render_card("ES (Mini)", "🦅", q_es, 50, False, sl_es, tp_es)
+    with col_mes: render_card("MES (Micro)", "🐥", q_mes, 5, True, sl_es, tp_es)
 
 elif view_mode == "Comparison":
     col_a, col_b = st.columns(2)
-    with col_a: render_card(f"{data['mini']} (Mini)", "🦁", q_mini, data["mini_val"], False)
-    with col_b: render_card(f"{data['micro']} (Micro)", "🐭", q_micro, data["micro_val"], True)
+    with col_a: render_card(f"{data['mini']} (Mini)", "🦁", q_mini, data["mini_val"], False, sl_pts, tp_pts)
+    with col_b: render_card(f"{data['micro']} (Micro)", "🐭", q_micro, data["micro_val"], True, sl_pts, tp_pts)
 
 else:
     # Single View
-    render_card(f"{data['name']} Analysis", "📊", q_single, data["val"], data["type"] == "micro")
+    render_card(f"{data['name']} Analysis", "📊", q_single, data["val"], data["type"] == "micro", sl_pts, tp_pts)
