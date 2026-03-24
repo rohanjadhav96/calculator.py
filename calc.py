@@ -142,17 +142,22 @@ with st.container():
     q_nq, q_mnq, q_es, q_mes = 0, 0, 0, 0
     
     if view_mode == "All":
-        # Split into 5 columns for NQ params, ES params, and Risk
-        c_sl1, c_tp1, c_sl2, c_tp2, c_risk = st.columns([1, 1, 1, 1, 1.2])
-        with c_sl1: sl_nq = st.number_input("NQ Stop (Pts)", 1.0, 500.0, 10.0, 0.5)
-        with c_tp1: tp_nq = st.number_input("NQ Target (Pts)", 1.0, 1000.0, 20.0, 0.5)
-        with c_sl2: sl_es = st.number_input("ES Stop (Pts)", 1.0, 500.0, 4.0, 0.25)
-        with c_tp2: tp_es = st.number_input("ES Target (Pts)", 1.0, 1000.0, 8.0, 0.25)
+        # 3 Column layout: SL stacked, TP stacked, Risk isolated on the right
+        c_sl, c_tp, c_risk = st.columns(3)
         
+        with c_sl:
+            sl_nq = st.number_input("NQ Stop (Pts)", 1.0, 500.0, 10.0, 0.5)
+            sl_es = st.number_input("ES Stop (Pts)", 1.0, 500.0, 4.0, 0.25)
+            
+        with c_tp:
+            tp_nq = st.number_input("NQ Target (Pts)", 1.0, 1000.0, 20.0, 0.5)
+            tp_es = st.number_input("ES Target (Pts)", 1.0, 1000.0, 8.0, 0.25)
+            
         with c_risk:
             if "Risk Based" in calc_mode:
                 rec_risk = min(500.0, float(risk_budget))
                 user_risk_input = st.number_input("Risk Amount ($)", 50.0, 10000.0, rec_risk, 10.0)
+                # Calculate directly now that SLs are defined
                 q_nq = math.floor(user_risk_input / (sl_nq * 20))
                 q_mnq = math.floor(user_risk_input / (sl_nq * 2))
                 q_es = math.floor(user_risk_input / (sl_es * 50))
