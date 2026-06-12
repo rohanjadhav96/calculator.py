@@ -3,20 +3,20 @@ import pandas as pd
 import math
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v50", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v51", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
 if 'phase2_status' not in st.session_state: st.session_state.phase2_status = "Pending"
 
-# Default to Standard Multipliers
-if 'risk_p1' not in st.session_state: st.session_state.risk_p1 = 2.0
-if 'lev_p1' not in st.session_state: st.session_state.lev_p1 = 2.0
-if 'risk_p2' not in st.session_state: st.session_state.risk_p2 = 2.0
-if 'lev_p2' not in st.session_state: st.session_state.lev_p2 = 2.0
-if 'ratio_p1_set' not in st.session_state: st.session_state.ratio_p1_set = 0.25
+# Friend's Optimal 1/3.4 Ratio Default
+if 'risk_p1' not in st.session_state: st.session_state.risk_p1 = 2.5
+if 'lev_p1' not in st.session_state: st.session_state.lev_p1 = 2.5
+if 'risk_p2' not in st.session_state: st.session_state.risk_p2 = 2.5
+if 'lev_p2' not in st.session_state: st.session_state.lev_p2 = 2.5
+if 'ratio_p1_set' not in st.session_state: st.session_state.ratio_p1_set = 0.294
 if 'ratio_p2_set' not in st.session_state: st.session_state.ratio_p2_set = 0.35
-if 'chal_type' not in st.session_state: st.session_state.chal_type = "Standard 2-Step"
+if 'chal_type' not in st.session_state: st.session_state.chal_type = "1-Step Pro"
 
 # --- STYLING ---
 st.markdown("""
@@ -34,96 +34,94 @@ st.markdown("""
     .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
     .farm-box { background-color: #1a1a0a; padding: 10px; border-left: 3px solid #FFD700; font-size: 0.9em; color: #fffacd; margin-bottom: 10px; }
     .safety-box { background-color: #0d1b2a; border: 1px solid #4169e1; padding: 15px; border-radius: 8px; margin-top: 10px; margin-bottom: 20px; }
-    .ev-box { background-color: #0d1b2a; border: 1px solid #1b263b; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v50")
-st.caption("Update: Patched for New 6% DD, 4% Daily Loss, & 20% Add-on Rule")
+st.title("🛡️ Breakout Hedge Commander v51")
+st.caption("Update: Breakout Architecture Overhaul & 10k Tier Integration")
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("1. Choose Your Mode")
+    st.header("1. Choose Your Challenge")
     
-    c_farm, c_1step = st.columns(2)
-    if c_farm.button("💸 2-STEP (6% DD)"):
-        st.session_state.chal_type = "Standard 2-Step"
-        st.session_state.risk_p1 = 2.0
-        st.session_state.ratio_p1_set = 0.24
-        st.session_state.ratio_p2_set = 0.32
-        st.rerun()
-    if c_1step.button("🎯 1-STEP (0.25)"):
-        st.session_state.chal_type = "1-Step Pro"
-        st.session_state.risk_p1 = 2.5
-        st.session_state.ratio_p1_set = 0.25
-        st.rerun()
-
-    chal_type = st.radio("Challenge Type", ["Standard 2-Step", "1-Step Pro"], index=["Standard 2-Step", "1-Step Pro"].index(st.session_state.chal_type))
+    chal_type = st.selectbox("Challenge Type", ["1-Step Turbo", "1-Step Pro", "1-Step Classic", "2-Step Classic"], index=["1-Step Turbo", "1-Step Pro", "1-Step Classic", "2-Step Classic"].index(st.session_state.chal_type))
     st.session_state.chal_type = chal_type
 
     st.markdown("---")
     st.header("2. Account Configuration")
     
     num_accounts = st.number_input("Active Accounts (Multiplier)", min_value=1, max_value=50, value=1)
-    acct_choice = st.selectbox("Select Account Size", [25000, 50000, 100000, 200000], index=1)
+    acct_choice = st.selectbox("Select Account Size", [10000, 25000, 50000, 100000, 200000], index=0)
     
-    # Base fee estimator (user can manually override due to pricing changes)
-    if acct_choice == 25000: est_base = 250.0
-    elif acct_choice == 50000: est_base = 450.0
-    elif acct_choice == 100000: est_base = 750.0
-    elif acct_choice == 200000: est_base = 1500.0
+    # EXACT BREAKOUT BASE PRICING MATRIX
+    pricing_matrix = {
+        "1-Step Turbo": {10000: 40.0, 25000: 95.0, 50000: 180.0, 100000: 330.0, 200000: 660.0},
+        "1-Step Pro": {10000: 60.0, 25000: 150.0, 50000: 280.0, 100000: 545.0, 200000: 1090.0},
+        "1-Step Classic": {10000: 85.0, 25000: 215.0, 50000: 400.0, 100000: 750.0, 200000: 1500.0},
+        "2-Step Classic": {10000: 85.0, 25000: 215.0, 50000: 400.0, 100000: 750.0, 200000: 1500.0}
+    }
     
-    base_fee = st.number_input("Base Eval Fee ($)", value=est_base, help="Enter the exact base price from the website.")
+    est_base = pricing_matrix[chal_type].get(acct_choice, 100.0)
+    base_fee = st.number_input("Base Eval Fee ($)", value=est_base)
     
-    split_choice = st.radio("Profit Split Add-on", ["90% Split (+20% Fee)", "80% Split (Standard)"], horizontal=True)
-    apply_discount = st.checkbox("Apply 2% Discount Code?", value=True)
+    split_choice = st.radio("Profit Split", ["90% Split (+20% Fee)", "80% Split (Standard)"], horizontal=True)
     
-    # NEW 20% Add-on Logic based on user screenshot
+    # 20% Add-on Logic + 2% MATCH Discount
     add_on = base_fee * 0.20 if "90%" in split_choice else 0.0
     raw_fee = base_fee + add_on
-    final_fee = raw_fee * 0.98 if apply_discount else raw_fee
+    final_fee = raw_fee * 0.98  # Fixed MATCH 2% Code
     
-    st.metric("Final Cost (Per Account)", f"${final_fee:.2f}", f"+${add_on:.2f} for 90%" if add_on > 0 else None, delta_color="off")
+    st.metric(f"Final Cost (with 'MATCH')", f"${final_fee:.2f}", f"+${add_on:.2f} for 90%" if add_on > 0 else None, delta_color="off")
     
     acct_size = acct_choice
     fee = final_fee
     profit_split_pct = 0.90 if "90%" in split_choice else 0.80
 
     st.header("3. Prop Firm Settings")
-    if chal_type == "1-Step Pro":
+    
+    # DYNAMIC TARGETS AND DRAWDOWNS
+    if chal_type == "1-Step Turbo":
+        max_dd_pct = 0.03
+        target_p1_pct = 0.09
+        daily_limit = 0.03
+    elif chal_type == "1-Step Pro":
         max_dd_pct = 0.05
         target_p1_pct = 0.12
-    else:
-        # Changed default to 6.0% based on the update
-        max_dd_pct = st.number_input("Max Static Drawdown (%)", value=6.0, step=0.1) / 100
-        target_p1_pct = 0.05
-        target_p2_pct = 0.10
+        daily_limit = 0.03
+    elif chal_type == "1-Step Classic":
+        max_dd_pct = 0.06
+        target_p1_pct = 0.10
+        daily_limit = 0.03
+    else: # 2-Step Classic
+        max_dd_pct = 0.06
+        target_p1_pct = 0.10
+        target_p2_pct = 0.05
+        daily_limit = 0.04
     
-    st.markdown("**Phase 1 Settings (Max Daily Loss: 4%)**")
+    st.markdown(f"**Phase 1 Settings (Max Daily: {daily_limit*100:.0f}%)**")
     c1, c2 = st.columns(2)
     risk_p1_in = c1.number_input("P1 Risk (%)", 0.1, 10.0, st.session_state.risk_p1, 0.1) / 100
     lev_p1_in = c2.number_input("P1 Leverage (x)", 1.0, 100.0, st.session_state.lev_p1, 0.1)
 
-    if chal_type != "1-Step Pro":
+    if chal_type == "2-Step Classic":
         st.markdown("**Phase 2 Settings**")
         c3, c4 = st.columns(2)
         risk_p2_in = c3.number_input("P2 Risk (%)", 0.1, 10.0, st.session_state.risk_p2, 0.1) / 100
         lev_p2_in = c4.number_input("P2 Leverage (x)", 1.0, 100.0, st.session_state.lev_p2, 0.1)
+    else:
+        risk_p2_in = risk_p1_in
+        lev_p2_in = lev_p1_in
     
     st.header("4. CEX & Hedge Settings")
     cex_lev_in = st.number_input("CEX Futures Leverage (x)", min_value=1.0, max_value=200.0, value=20.0, step=1.0)
     
-    ratio_p1 = st.number_input("P1 Ratio", min_value=0.01, max_value=5.0, value=st.session_state.ratio_p1_set, step=0.01, format="%.2f")
-    if chal_type != "1-Step Pro":
+    ratio_p1 = st.number_input("P1 Ratio (Multiplier)", min_value=0.01, max_value=5.0, value=st.session_state.ratio_p1_set, step=0.001, format="%.3f")
+    if chal_type == "2-Step Classic":
         ratio_p2 = st.number_input("P2 Ratio", min_value=0.01, max_value=5.0, value=st.session_state.ratio_p2_set, step=0.01, format="%.2f")
     else:
         ratio_p2 = 0.0
 
-    if chal_type == "1-Step Pro":
-        loss_per_pct = (acct_size * 0.01) * ratio_p1
-        st.sidebar.markdown(f"""<div class='farm-box'><b>Mode: 1-Step ({acct_size//1000}k)</b><br>Target: 12% | Max DD: 5%<br><i>Ratio set to {ratio_p1:.2f} <b>(${loss_per_pct:,.2f} loss per 1%)</b></i></div>""", unsafe_allow_html=True)
-    else:
-        st.sidebar.markdown(f"""<div class='success-box'><b>Mode: 2-Step ({acct_size//1000}k)</b><br>Target: 5% / 10% | Max DD: 6%</div>""", unsafe_allow_html=True)
+    st.sidebar.markdown(f"""<div class='farm-box'><b>Mode: {chal_type} ({acct_size//1000}k)</b><br>Target: {target_p1_pct*100:.0f}% | Max DD: {max_dd_pct*100:.0f}%</div>""", unsafe_allow_html=True)
 
     st.markdown("---")
     st.header("5. Commissions")
@@ -163,7 +161,7 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage):
 p1 = calculate_metrics(acct_size * target_p1_pct, ratio_p1, risk_p1_in, lev_p1_in)
 
 total_sunk_per_acct = fee + p1['pass_cost']
-if chal_type != "1-Step Pro":
+if chal_type == "2-Step Classic":
     p2 = calculate_metrics(acct_size * target_p2_pct, ratio_p2, risk_p2_in, lev_p2_in)
     total_sunk_per_acct += p2['pass_cost']
 
@@ -177,7 +175,7 @@ st.session_state.starting_capital = start_cap
 realized_debt = 0.0
 if st.session_state.phase1_status == "Passed":
     realized_debt += (fee + p1['pass_cost']) * num_accounts
-if chal_type != "1-Step Pro" and st.session_state.phase2_status == "Passed":
+if chal_type == "2-Step Classic" and st.session_state.phase2_status == "Passed":
     realized_debt += p2['pass_cost'] * num_accounts
 
 current_wallet = start_cap - realized_debt
@@ -185,7 +183,7 @@ current_wallet = start_cap - realized_debt
 st.sidebar.metric("Live CEX Wallet Available", f"${current_wallet:,.2f}", f"-${realized_debt:,.2f} Sunk" if realized_debt > 0 else None, delta_color="normal")
 
 # --- TABS ---
-if chal_type == "1-Step Pro":
+if chal_type != "2-Step Classic":
     tabs = st.tabs(["Phase 1 (Eval)", "Funded Phase (Sniper)"])
     t1, t3 = tabs[0], tabs[1]
 else:
@@ -234,7 +232,7 @@ with t1:
         if st.button("Undo Phase 1"): st.session_state.phase1_status="Pending"; st.rerun()
 
 # === PHASE 2 ===
-if chal_type != "1-Step Pro":
+if chal_type == "2-Step Classic":
     with t2:
         if st.session_state.phase1_status != "Passed":
             st.warning("🔒 Complete Phase 1 first.")
@@ -269,10 +267,10 @@ if chal_type != "1-Step Pro":
 with t3:
     st.markdown("<div class='big-header'>Funded Phase Execution</div>", unsafe_allow_html=True)
     
-    if chal_type != "1-Step Pro" and st.session_state.phase2_status != "Passed":
+    if chal_type == "2-Step Classic" and st.session_state.phase2_status != "Passed":
         st.warning("🔒 Complete Phase 2 first to unlock Funded Math.")
         st.stop()
-    elif chal_type == "1-Step Pro" and st.session_state.phase1_status != "Passed":
+    elif chal_type != "2-Step Classic" and st.session_state.phase1_status != "Passed":
         st.warning("🔒 Complete Phase 1 first to unlock Funded Math.")
         st.stop()
 
@@ -288,8 +286,8 @@ with t3:
     f_ratio = st.slider("Funded Hedge Ratio (Multiplier)", 0.1, 1.5, st.session_state.funded_ratio, 0.01)
     st.session_state.funded_ratio = f_ratio
 
-    active_risk = risk_p1_in if chal_type == "1-Step Pro" else risk_p2_in
-    active_lev = lev_p1_in if chal_type == "1-Step Pro" else lev_p2_in
+    active_risk = risk_p1_in if chal_type != "2-Step Classic" else risk_p2_in
+    active_lev = lev_p1_in if chal_type != "2-Step Classic" else lev_p2_in
     
     f_metrics = calculate_metrics(target_profit_amt, f_ratio, active_risk, active_lev)
     payout_one = target_profit_amt * profit_split_pct
@@ -317,7 +315,7 @@ with t3:
         """
     st.markdown(safety_html, unsafe_allow_html=True)
 
-    # MULTI-DAY DRAIN CALCULATOR (Respects new 4% daily limit)
+    # MULTI-DAY DRAIN CALCULATOR 
     total_drain = acct_size * max_dd_pct
     days_to_drain = math.ceil(max_dd_pct / active_risk)
     
@@ -335,8 +333,8 @@ with t3:
 
     c1, c2 = st.columns(2)
     
-    win_title = "SCENARIO A: ACCIDENTAL WIN (RELOAD)" if chal_type == "1-Step Pro" else "SCENARIO A: WIN & WITHDRAW"
-    fail_title = "SCENARIO B: FINAL EXIT DRAIN" if chal_type == "1-Step Pro" else "SCENARIO B: FAIL & DRAIN"
+    win_title = "SCENARIO A: ACCIDENTAL WIN (RELOAD)" if chal_type != "2-Step Classic" else "SCENARIO A: WIN & WITHDRAW"
+    fail_title = "SCENARIO B: FINAL EXIT DRAIN" if chal_type != "2-Step Classic" else "SCENARIO B: FAIL & DRAIN"
 
     with c1:
         st.markdown(f"""
@@ -354,7 +352,7 @@ with t3:
         st.markdown(f"""
         <div class="result-card" style="border: 1px solid #FF4B4B;">
             <div class="fail-header">{fail_title}</div>
-            <span style="color:#888; font-size: 0.9em;"><i>*Draining {max_dd_pct*100}% takes <b>{days_to_drain} days</b> (risking {active_risk*100}%/day) to avoid the 4% daily limit.</i></span><br><br>
+            <span style="color:#888; font-size: 0.9em;"><i>*Draining {max_dd_pct*100}% takes <b>{days_to_drain} days</b> (risking {active_risk*100}%/day) to avoid the {daily_limit*100:.0f}% daily limit.</i></span><br><br>
             <div class="money-row"><span>CEX Win ({max_dd_pct*100:.0f}% DD Total):</span><span class="money-pos">+${net_trade_cash_fail_total:,.2f}</span></div>
             <div class="money-row" style="border-top:1px solid #333; padding-top:5px;"><span><b>Net Trade Cash Flow:</b></span><span class="{'money-pos' if net_trade_cash_fail_total>0 else 'money-neg'}">+${net_trade_cash_fail_total:,.2f}</span></div>
             <br>
