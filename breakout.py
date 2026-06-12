@@ -3,7 +3,7 @@ import pandas as pd
 import math
 
 # --- APP CONFIGURATION ---
-st.set_page_config(page_title="Breakout Hedge Commander v52", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Breakout Hedge Commander v53", layout="wide", page_icon="🛡️")
 
 # --- SESSION STATE INITIALIZATION ---
 if 'phase1_status' not in st.session_state: st.session_state.phase1_status = "Pending"
@@ -30,15 +30,15 @@ st.markdown("""
     .fail-header { color: #FF4B4B; font-size: 1.4em; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
     .money-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
     .total-row { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 1px solid #444; font-size: 1.2em; font-weight: bold; }
-    .info-box { background-color: #1c1c1c; padding: 10px; border-left: 3px solid #888; font-size: 0.9em; color: #ccc; margin-bottom: 10px; }
+    .info-box { background-color: #1c1c1c; padding: 15px; border-left: 4px solid #4169e1; font-size: 0.95em; color: #ccc; margin-bottom: 20px; border-radius: 4px; }
     .success-box { background-color: #0a1f0a; padding: 10px; border-left: 3px solid #00FF7F; font-size: 0.9em; color: #ccffcc; margin-bottom: 10px; }
     .farm-box { background-color: #1a1a0a; padding: 10px; border-left: 3px solid #FFD700; font-size: 0.9em; color: #fffacd; margin-bottom: 10px; }
     .safety-box { background-color: #0d1b2a; border: 1px solid #4169e1; padding: 15px; border-radius: 8px; margin-top: 10px; margin-bottom: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🛡️ Breakout Hedge Commander v52")
-st.caption("Update: Dual Strategy Arbitrage (Classic 0.41 vs Pro 0.294)")
+st.title("🛡️ Breakout Hedge Commander v53")
+st.caption("Update: Live Target Allocation Matrix Added")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -79,7 +79,6 @@ with st.sidebar:
     
     split_choice = st.radio("Profit Split", ["90% Split (+20% Fee)", "80% Split (Standard)"], horizontal=True)
     
-    # 20% Add-on Logic + 2% MATCH Discount
     add_on = base_fee * 0.20 if "90%" in split_choice else 0.0
     raw_fee = base_fee + add_on
     final_fee = raw_fee * 0.98  # Fixed MATCH 2% Code
@@ -92,7 +91,6 @@ with st.sidebar:
 
     st.header("3. Prop Firm Settings")
     
-    # DYNAMIC TARGETS AND DRAWDOWNS
     if chal_type == "1-Step Turbo":
         max_dd_pct = 0.03
         target_p1_pct = 0.09
@@ -105,7 +103,7 @@ with st.sidebar:
         max_dd_pct = 0.06
         target_p1_pct = 0.10
         daily_limit = 0.03
-    else: # 2-Step Classic
+    else:
         max_dd_pct = 0.06
         target_p1_pct = 0.10
         target_p2_pct = 0.05
@@ -167,7 +165,9 @@ def calculate_metrics(target_profit, ratio_val, risk_pct, leverage):
         "fail_refund_trade": cex_win_net_trade,
         "fail_refund_full": cex_win_net_drain,
         "prop_size": prop_size, 
-        "cex_size": cex_size
+        "cex_size": cex_size,
+        "risk_usd": risk_usd,
+        "total_drain": total_drain
     }
 
 # --- CALCULATIONS ---
@@ -177,6 +177,26 @@ total_sunk_per_acct = fee + p1['pass_cost']
 if chal_type == "2-Step Classic":
     p2 = calculate_metrics(acct_size * target_p2_pct, ratio_p2, risk_p2_in, lev_p2_in)
     total_sunk_per_acct += p2['pass_cost']
+
+# --- DYNAMIC RISK MATRIX VISUALIZATION (MAIN SCREEN TOP) ---
+st.markdown("### 📊 Live Risk Allocation Matrix")
+calc_prop_risk_trade = p1['risk_usd'] * num_accounts
+calc_cex_risk_trade = calc_prop_risk_trade * ratio_p1
+calc_prop_drain = p1['total_drain'] * num_accounts
+calc_cex_drain_win = calc_prop_drain * ratio_p1
+
+risk_matrix_data = {
+    "Execution Metric": ["Per-Trade Risk", "Full-Account Risk (Max Drawdown)"],
+    "Prop Account Exposure": [f"${calc_prop_risk_trade:,.2f} ({risk_p1_in*100:.1f}%)", f"${calc_prop_drain:,.2f} ({max_dd_pct*100:.1f}%)"],
+    "CEX Hedge Target Outcome": [f"+${calc_cex_risk_trade:,.2f} (Gross Win)", f"+${calc_cex_drain_win:,.2f} (Gross Win)"]
+}
+st.table(pd.DataFrame(risk_matrix_data))
+
+st.markdown(f"""
+<div class="info-box">
+    <b>💡 Execution Rule:</b> When executing trades, if you risk exactly <b>${calc_prop_risk_trade:,.2f}</b> on your Breakout account, your corresponding position size on your CEX futures exchange must target a gross profit of <b>${calc_cex_risk_trade:,.2f}</b> if the trade fails on the prop side.
+</div>
+""", unsafe_allow_html=True)
 
 # --- WALLET LEDGER LOGIC ---
 st.sidebar.markdown("---")
@@ -192,7 +212,6 @@ if chal_type == "2-Step Classic" and st.session_state.phase2_status == "Passed":
     realized_debt += p2['pass_cost'] * num_accounts
 
 current_wallet = start_cap - realized_debt
-
 st.sidebar.metric("Live CEX Wallet Available", f"${current_wallet:,.2f}", f"-${realized_debt:,.2f} Sunk" if realized_debt > 0 else None, delta_color="normal")
 
 # --- TABS ---
@@ -305,7 +324,6 @@ with t3:
     f_metrics = calculate_metrics(target_profit_amt, f_ratio, active_risk, active_lev)
     payout_one = target_profit_amt * profit_split_pct
     
-    # CEX FUTURES ANTI-LIQUIDATION ENGINE
     cex_margin_req = (f_metrics['cex_size'] / cex_lev_in) * num_accounts
     max_cex_loss = f_metrics['pass_cost'] * num_accounts
     safe_balance_needed = cex_margin_req + max_cex_loss
@@ -328,7 +346,6 @@ with t3:
         """
     st.markdown(safety_html, unsafe_allow_html=True)
 
-    # MULTI-DAY DRAIN CALCULATOR 
     total_drain = acct_size * max_dd_pct
     days_to_drain = math.ceil(max_dd_pct / active_risk)
     
@@ -345,7 +362,6 @@ with t3:
     wallet_after_fail = current_wallet + net_trade_cash_fail_total
 
     c1, c2 = st.columns(2)
-    
     win_title = "SCENARIO A: ACCIDENTAL WIN (RELOAD)" if chal_type != "2-Step Classic" else "SCENARIO A: WIN & WITHDRAW"
     fail_title = "SCENARIO B: FINAL EXIT DRAIN" if chal_type != "2-Step Classic" else "SCENARIO B: FAIL & DRAIN"
 
