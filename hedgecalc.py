@@ -32,8 +32,12 @@ with st.sidebar:
     max_dd_percent = st.number_input("Max Overall Drawdown (%)", min_value=1.0, value=8.0, step=1.0)
     account_blow_level = tier_value * (1.0 - (max_dd_percent / 100.0))
     
-    prop_balance = st.number_input("Current Prop Balance ($)", min_value=0.0, value=10259.0, step=10.0)
+    prop_balance = st.number_input("Current Prop Balance ($)", min_value=0.0, value=9719.0, step=10.0)
     cex_balance = st.number_input("Current Bitunix Balance ($)", min_value=0.0, value=1500.0, step=10.0)
+    
+    # NEW: Tracking previous running PnL on the CEX for this specific account
+    prev_cex_pnl = st.number_input("Previous CEX PnL (Running Total $)", value=-60.0, step=10.0, 
+                                   help="Enter your running total profit/loss on Bitunix for this specific prop account. Use negatives for losses.")
     
     st.markdown("---")
     st.header("🧠 Strategy Selector")
@@ -48,7 +52,7 @@ with st.sidebar:
     
     target_net_profit = 0
     if "High Win-Rate" in selected_strategy:
-        target_net_profit = st.slider("Target Net Profit (If Prop Wins)", 10, 500, 150, step=10)
+        target_net_profit = st.slider("Target Net Profit (If Prop Wins)", 10, 500, 100, step=10)
 
 # ==========================================
 # DEAD ZONE CALCULATION
@@ -69,7 +73,7 @@ st.subheader("🎯 Trade Parameters")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=10.0, value=300.0, step=10.0)
+    prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=10.0, value=350.0, step=10.0)
 with col2:
     cmp_price = st.number_input("Entry Price (CMP)", min_value=0.0001, value=65000.0, format="%.4f")
 with col3:
@@ -104,9 +108,12 @@ elif "Drain" in selected_strategy:
     prop_sl_dollar = prop_risk_chunk
     prop_tp_dollar = prop_risk_chunk * 3.0
     
+    # Dynamically calculate exact breakeven for CEX SL
+    gross_payout = prop_tp_dollar - dead_zone_amt
+    net_payout = max(0.0, gross_payout * 0.90)
+    
     if prop_balance < tier_value:
-        gross_payout = prop_tp_dollar - dead_zone_amt
-        net_payout = max(0.0, gross_payout * 0.90)
+        # Match CEX SL perfectly to the net payout for a $0 Breakeven
         cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 1.5) 
     else:
         # Throttle CEX SL when in profit to generate massive net returns on Payout
@@ -235,39 +242,51 @@ while sim_balance > account_blow_level:
 # ==========================================
 st.subheader("🔮 Immediate Trade Outcomes")
 
+# Add a tiny visual helper for formatting money
+def fmt_money(val):
+    return f"{'-$' if val < 0 else '+$'}{abs(val):,.2f}"
+
 scen1_prop_pnl = -prop_sl_dollar
 scen1_cex_pnl = cex_tp_dollar
-scen1_net = scen1_prop_pnl + scen1_cex_pnl
+# Add previous PnL to the final net
+scen1_net = scen1_prop_pnl + scen1_cex_pnl + prev_cex_pnl
 
 scen2_gross_prop = prop_tp_dollar
 scen2_payout = max(0.0, (scen2_gross_prop - dead_zone_amt) * 0.90)
 scen2_cex_pnl = -cex_sl_dollar
-scen2_net = scen2_payout + scen2_cex_pnl
+# Add previous PnL to the final net
+scen2_net = scen2_payout + scen2_cex_pnl + prev_cex_pnl
 
 outcome_data = [
     {
         "Scenario": "📉 The Drain (Prop SL / CEX TP)",
         "Prop Balance Change": f"-${prop_sl_dollar:.2f}",
         "CEX PnL (Wallet)": f"+${cex_tp_dollar:.2f}",
-        "Total Net Cash": f"${scen1_net:.2f}"
+        "Total Net Cash (Incl Prev PnL)": fmt_money(scen1_net)
     },
     {
         "Scenario": "📈 The Payout (Prop TP / CEX SL)",
         "Prop Balance Change": f"+${prop_tp_dollar:.2f}",
         "CEX PnL (Wallet)": f"-${cex_sl_dollar:.2f}",
-        "Total Net Cash": f"${scen2_net:.2f} (After 90% Split)"
+        "Total Net Cash (Incl Prev PnL)": fmt_money(scen2_net)
     }
 ]
 st.table(pd.DataFrame(outcome_data))
 
 st.markdown("---")
 st.subheader("🩸 Full Account Drain Projection (100% Loss Rate)")
+
+# Include previous PnL in the final drain projection
+final_drain_net = total_drain_profit + prev_cex_pnl
+pnl_color = "success-text" if final_drain_net > 0 else "warning-text"
+
 st.markdown(f"""
 <div class="metric-box">
     If you lose every single trade from your current balance of <b>${prop_balance:,.2f}</b> until the account is completely blown (at the ${account_blow_level:,.2f} limit), the math dynamically extracts cash on every single loss.
     <br><br>
     💥 <b>Trades to Blow Account:</b> {trades_to_blow} consecutive losses<br>
-    💰 <b>Total Bitunix Cash Extracted:</b> <span class="success-text">+${total_drain_profit:,.2f}</span>
+    💰 <b>Total Bitunix Cash Extracted (From Current Balance):</b> <span class="success-text">+${total_drain_profit:,.2f}</span><br>
+    📊 <b>FINAL NET CASH (Including Previous ${prev_cex_pnl:.2f} PnL):</b> <span class="{pnl_color}">{fmt_money(final_drain_net)}</span>
 </div>
 """, unsafe_allow_html=True)
 
