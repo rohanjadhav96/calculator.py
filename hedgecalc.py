@@ -269,7 +269,8 @@ def fmt_money(val):
 
 scen1_prop_pnl = -prop_sl_dollar
 scen1_cex_pnl = cex_tp_dollar
-scen1_net = scen1_prop_pnl + scen1_cex_pnl + prev_cex_pnl
+# FIXED: We only count REAL CASH. We do not subtract virtual prop losses from your actual wallet net.
+scen1_net = scen1_cex_pnl + prev_cex_pnl
 
 scen2_gross_prop = prop_tp_dollar
 scen2_payout = max(0.0, (scen2_gross_prop - dead_zone_amt) * 0.90)
