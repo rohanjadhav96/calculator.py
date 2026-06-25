@@ -1,108 +1,91 @@
 import streamlit as st
 import pandas as pd
 
-# ==========================================
-# PAGE CONFIGURATION
-# ==========================================
-st.set_page_config(page_title="Hedge Sizing Dashboard", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
+# Configure page layout and visual theme
+st.set_page_config(layout="wide", page_title="Hedge Sizing Dashboard")
 
-# Custom CSS for metrics to keep them looking sharp
+# Custom CSS for better UI appearance
 st.markdown("""
     <style>
-    .stMetric { background-color: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 8px; }
+    .metric-box {
+        background-color: #1e1e1e; padding: 15px; border-radius: 10px; margin-bottom: 10px;
+    }
+    .warning-text { color: #ff4b4b; font-weight: bold; }
+    .success-text { color: #00c853; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Delta Hedge Execution Engine")
-st.markdown("Automated position sizing and risk management for Prop vs. CEX strategies.")
+st.title("🛡️ Prop vs CEX Hedge Sizing Engine")
+st.markdown("Dynamic mathematical sizing for perfect risk extraction.")
 
 # ==========================================
-# SIDEBAR: ACCOUNT STATUS & RISK
+# SIDEBAR CONFIGURATION
 # ==========================================
 with st.sidebar:
-    st.header("💼 Account Balances & Risk")
+    st.header("⚙️ Account Settings")
     
-    with st.container(border=True):
-        account_tier = st.selectbox("Prop Account Tier", ["50k Account", "10k Account"])
-        prop_balance = st.number_input("Prop Balance ($)", value=50000.0 if "50k" in account_tier else 10000.0, step=10.0)
-        bitunix_balance = st.number_input("Bitunix Wallet ($)", value=2484.0, step=10.0)
-
-    # Calculate Tier Constants
-    baseline = 50000.0 if "50k" in account_tier else 10000.0
-    default_risk = 1750.0 if "50k" in account_tier else 350.0
+    tier_str = st.selectbox("Funded Account Tier", ["10k", "50k", "100k"], index=0)
+    tier_value = int(tier_str.replace("k", "000"))
     
-    st.markdown("### 🎲 Risk Parameters")
-    prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", value=default_risk, step=50.0)
+    # 4% Legacy Rule Max Daily Loss
+    max_daily_loss = tier_value * 0.04 
     
-    is_in_dead_zone = prop_balance < baseline
-    dead_zone_amt = max(0.0, baseline - prop_balance)
+    prop_balance = st.number_input("Current Prop Balance ($)", min_value=0.0, value=10259.0, step=10.0)
+    cex_balance = st.number_input("Current Bitunix Balance ($)", min_value=0.0, value=3000.0, step=10.0)
     
-    st.divider()
-    st.subheader("📊 Status")
-    if is_in_dead_zone:
-        st.error(f"**Dead Zone Active:** ${dead_zone_amt:,.2f} below baseline.")
-        st.caption("Focus on Drain or 1:3 Payout strategies to clear this gap safely.")
-    else:
-        st.success("**Funded & Flat!** 100% of profits are payout eligible.")
-        st.caption("You are cleared to use Aggressive 1:1 (0.90x) or High Win-Rate Payouts.")
+    st.markdown("---")
+    st.header("🧠 Strategy Selector")
+    
+    strategy_options = [
+        "Drain / Payout Focus (1:3 RR) [DYNAMIC]",
+        "High Win-Rate Payout (Asymmetric 3:1)",
+        "Aggressive Cash Drain (1:1)",
+        "Standard Breakeven (1:2 RR)"
+    ]
+    selected_strategy = st.selectbox("Select Strategy Profile", strategy_options)
+    
+    target_net_profit = 0
+    if "High Win-Rate" in selected_strategy:
+        target_net_profit = st.slider("Target Net Profit (If Prop Wins)", 10, 500, 100, step=10)
 
 # ==========================================
-# MAIN UI: TRADE SETUP & STRATEGY
+# DEAD ZONE CALCULATION
 # ==========================================
-col1, col2 = st.columns(2)
+is_underwater = prop_balance < tier_value
+dead_zone_amt = max(0.0, tier_value - prop_balance)
+
+if is_underwater:
+    st.sidebar.markdown(f"🚨 **DEAD ZONE:** You are **${dead_zone_amt:,.2f}** underwater.")
+else:
+    buffer_amt = prop_balance - tier_value
+    st.sidebar.markdown(f"✅ **BUFFER:** You have a **${buffer_amt:,.2f}** safety buffer.")
+
+# ==========================================
+# MAIN DASHBOARD INPUTS
+# ==========================================
+st.subheader("🎯 Trade Parameters")
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    with st.container(border=True):
-        st.subheader("🎯 1. Trade Setup")
-        trade_direction = st.radio("Bitunix (CEX) Direction", ["Long 🟢", "Short 🔴"], horizontal=True)
-        is_long = "Long" in trade_direction
-        
-        inner_c1, inner_c2 = st.columns(2)
-        with inner_c1:
-            cmp = st.number_input("Entry Price (CMP)", value=62.15, format="%.4f")
-        with inner_c2:
-            default_sl = (cmp - 2.0) if is_long else (cmp + 2.0)
-            sl_price = st.number_input("Bitunix Stop Loss (SL)", value=default_sl, format="%.4f")
-            
-        # price_delta always represents the distance to the CEX Stop Loss
-        price_delta = abs(cmp - sl_price)
-
+    prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=10.0, value=350.0, step=10.0)
 with col2:
-    with st.container(border=True):
-        st.subheader("🧠 2. Strategy Engine")
-        
-        # Smart defaulting based on dead zone
-        strategy_options = [
-            "High Win-Rate Payout (Asymmetric 3:1)",
-            "Drain / Payout Focus (1:3 RR)", 
-            "Aggressive Cash Drain (1:1 RR, 0.9x Ratio)", 
-            "Perfect Breakeven"
-        ]
-        
-        strategy_idx = 0 if not is_in_dead_zone else 1
-        selected_strategy = st.selectbox("Select Hedge Algorithm", strategy_options, index=strategy_idx)
-        
-        # Dynamic UI elements based on selected strategy
-        if "High Win-Rate" in selected_strategy:
-            st.success("💡 **Active:** Risking 3 to make 1 on Prop. Generates frequent small payouts while laying a trap for a massive Bitunix win if the Prop blows.")
-            target_net_profit = st.slider("Target Net Profit if Prop Wins ($)", min_value=50, max_value=200, value=100, step=10)
-            st.caption("🎯 **Strategic Tip:** Aim for $100. If the Prop account hits SL, you will pocket a massive Bitunix win. Switch to 'Drain Mode' afterwards to extract the remaining balance.")
-        elif "Drain" in selected_strategy:
-            st.info("💡 **Active:** Risking 1 to make 3 on Prop. Perfect for blasting past the dead zone and forcing a payout.")
-        elif "Aggressive" in selected_strategy:
-            st.info("💡 **Active:** 1:1 Risk/Reward with a 0.90 ratio. Use ONLY when account is flat at baseline.")
-        else:
-            st.info("💡 **Active:** Matches Prop TP perfectly to CEX SL + Payout splits.")
+    cmp_price = st.number_input("Entry Price (CMP)", min_value=0.0001, value=65000.0, format="%.4f")
+with col3:
+    prop_sl_price = st.number_input("Prop Stop Loss Price", min_value=0.0001, value=64000.0, format="%.4f")
+with col4:
+    cex_direction = st.selectbox("CEX Direction (Hedge)", ["Short", "Long"])
+
+# Verify risk is within daily limit
+if prop_risk_chunk > max_daily_loss:
+    st.error(f"⚠️ WARNING: Your risk (${prop_risk_chunk}) exceeds the 4% daily limit (${max_daily_loss})!")
 
 # ==========================================
-# MATH ENGINE (Hidden from UI)
+# CORE MATH ENGINE
 # ==========================================
+price_delta = abs(cmp_price - prop_sl_price)
 if price_delta <= 0:
-    st.error("Stop loss must be different from entry price.")
+    st.warning("Please enter a valid Entry and Stop Loss price to calculate.")
     st.stop()
-
-# --- Unified Math Logic ---
-# CEX SL hit == Prop TP hit. Therefore, Prop TP distance always equals price_delta.
 
 # Strategy 1: High Win-Rate Payout (Asymmetric 3:1)
 if "High Win-Rate" in selected_strategy:
@@ -118,14 +101,23 @@ if "High Win-Rate" in selected_strategy:
     prop_qty = prop_tp_dollar / price_delta
     cex_qty = cex_sl_dollar / price_delta
 
-# Strategy 2: Drain / Payout Focus (1:3 RR)
+# Strategy 2: Drain / Payout Focus (1:3 RR) [DYNAMIC SCALER]
 elif "Drain" in selected_strategy:
     prop_sl_dollar = prop_risk_chunk
     prop_tp_dollar = prop_risk_chunk * 3.0
     
-    # Pre-calculated safety ratios to ensure Bitunix wallet is safe while clearing dead zones
-    cex_sl_dollar = prop_risk_chunk * 1.74 
-    cex_tp_dollar = prop_risk_chunk * 0.58 
+    if prop_balance < tier_value:
+        # UNDERWATER: Aim for Perfect Breakeven
+        # Match CEX SL perfectly to the expected net payout to safely escape dead zone
+        gross_payout = prop_tp_dollar - dead_zone_amt
+        net_payout = max(0.0, gross_payout * 0.90)
+        cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 1.5) 
+    else:
+        # IN PROFIT: Aim for More Profits from Payout
+        # Throttle the CEX SL to 75% of Prop TP to guarantee massive net profit on wins
+        cex_sl_dollar = prop_tp_dollar * 0.75 
+        
+    cex_tp_dollar = cex_sl_dollar / 3.0 
     
     prop_qty = prop_tp_dollar / price_delta
     cex_qty = cex_sl_dollar / price_delta
@@ -143,109 +135,107 @@ elif "Aggressive" in selected_strategy:
 
 # Strategy 4: Perfect Breakeven
 else:
-    hedge_ratio = 0.73 if is_in_dead_zone else 0.90
-    rr_ratio = 1.37 if is_in_dead_zone else 1.0
-    
+    # Dynamic 1:2 RR for standard breakeven recovery
     prop_sl_dollar = prop_risk_chunk
-    prop_tp_dollar = prop_risk_chunk * rr_ratio
+    prop_tp_dollar = prop_risk_chunk * 2.0
+    
+    gross_payout = prop_tp_dollar - dead_zone_amt
+    net_payout = max(0.0, gross_payout * 0.90)
+    
+    cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 0.75)
+    cex_tp_dollar = cex_sl_dollar / 2.0
     
     prop_qty = prop_tp_dollar / price_delta
-    cex_qty = prop_qty * hedge_ratio
-    
-    cex_sl_dollar = cex_qty * price_delta
-    cex_tp_dollar = cex_qty * (price_delta / rr_ratio)
+    cex_qty = cex_sl_dollar / price_delta
 
 # ==========================================
 # UNIVERSAL TARGET PRICE CALCULATOR
 # ==========================================
-cex_tp_distance = cex_tp_dollar / cex_qty
-prop_sl_distance = prop_sl_dollar / prop_qty
+prop_direction = "Long" if cex_direction == "Short" else "Short"
 
-if is_long:
-    # Bitunix Long (CEX TP above, CEX SL below) / Prop Short (Prop SL above, Prop TP below)
-    cex_sl_price = sl_price
-    cex_tp_price = cmp + cex_tp_distance
-    prop_tp_price = sl_price
-    prop_sl_price = cmp + prop_sl_distance
+# Prop Target Prices
+if prop_direction == "Long":
+    prop_sl_target = cmp_price - price_delta
+    prop_tp_target = cmp_price + (prop_tp_dollar / prop_qty)
 else:
-    # Bitunix Short (CEX TP below, CEX SL above) / Prop Long (Prop SL below, Prop TP above)
-    cex_sl_price = sl_price
-    cex_tp_price = cmp - cex_tp_distance
-    prop_tp_price = sl_price
-    prop_sl_price = cmp - prop_sl_distance
+    prop_sl_target = cmp_price + price_delta
+    prop_tp_target = cmp_price - (prop_tp_dollar / prop_qty)
 
-# ==========================================
-# MAIN UI: EXECUTION PARAMETERS
-# ==========================================
-st.subheader("📋 3. Exact Execution Blueprints")
-
-ex_col1, ex_col2 = st.columns(2)
-
-with ex_col1:
-    prop_direction = "SHORT 🔴" if is_long else "LONG 🟢"
-    with st.container(border=True):
-        st.markdown(f"### 🏦 Breakout Prop ({prop_direction})")
-        st.metric("Position Size (Qty)", f"{prop_qty:,.2f}")
-        st.markdown(f"**Entry:** `{cmp:,.4f}`")
-        st.markdown(f"**Take Profit:** `{prop_tp_price:,.4f}`  *(+${prop_tp_dollar:,.2f})*")
-        st.markdown(f"**Stop Loss:** `{prop_sl_price:,.4f}`  *(-${prop_sl_dollar:,.2f})*")
-
-with ex_col2:
-    cex_direction = "LONG 🟢" if is_long else "SHORT 🔴"
-    with st.container(border=True):
-        st.markdown(f"### 💱 Bitunix CEX ({cex_direction})")
-        st.metric("Position Size (Qty)", f"{cex_qty:,.2f}")
-        st.markdown(f"**Entry:** `{cmp:,.4f}`")
-        st.markdown(f"**Take Profit:** `{cex_tp_price:,.4f}`  *(+${cex_tp_dollar:,.2f})*")
-        st.markdown(f"**Stop Loss:** `{cex_sl_price:,.4f}`  *(-${cex_sl_dollar:,.2f})*")
-
-# ==========================================
-# MAIN UI: LIQUIDATION & OUTCOMES
-# ==========================================
-st.divider()
-
-# Liquidation Safety Check
-if bitunix_balance < cex_sl_dollar:
-    st.error(f"🚨 **LIQUIDATION RISK:** Wallet balance (${bitunix_balance:,.2f}) cannot cover the CEX stop loss (${cex_sl_dollar:,.2f}). **DO NOT EXECUTE.** Deposit funds or reduce risk.")
-elif bitunix_balance < (cex_sl_dollar * 1.15):
-    st.warning(f"⚠️ **MARGIN WARNING:** Wallet balance is dangerously close to max loss. Allocate at least ${cex_sl_dollar * 1.10:,.2f} on Isolated Margin to avoid early engine liquidation.")
+# CEX Target Prices (Hedge)
+if cex_direction == "Long":
+    cex_sl_target = cmp_price - (cex_sl_dollar / cex_qty)
+    cex_tp_target = cmp_price + (cex_tp_dollar / cex_qty)
 else:
-    st.success(f"🛡️ **Wallet Safe:** Bitunix balance (${bitunix_balance:,.2f}) easily absorbs maximum structural risk (${cex_sl_dollar:,.2f}).")
+    cex_sl_target = cmp_price + (cex_sl_dollar / cex_qty)
+    cex_tp_target = cmp_price - (cex_tp_dollar / cex_qty)
 
-st.subheader("🔮 4. Projected Outcomes")
+# CEX Leverage required
+cex_notional = cex_qty * cmp_price
+cex_leverage = cex_notional / cex_balance
 
-tab1, tab2 = st.tabs(["Outcome A: The Market Reverses (Prop Blows/Bleeds)", "Outcome B: The Setup Wins (Prop Payout)"])
+# ==========================================
+# UI RENDERING: EXECUTION PLAN
+# ==========================================
+st.markdown("---")
+st.subheader("📋 Execution Plan (Enter these exactly)")
 
-with tab1:
-    st.markdown("### If Market Hits Your CEX Take Profit")
-    st.markdown(f"- **Bitunix Wallet:** Pocket **+${cex_tp_dollar:,.2f}** in clean crypto cash.")
-    st.markdown(f"- **Prop Account:** Takes a controlled ${prop_sl_dollar:,.2f} loss. Balance drops to `${prop_balance - prop_sl_dollar:,.2f}`.")
-    
-    if "High Win-Rate" in selected_strategy:
-        st.markdown("- **Next Step:** 🚀 **MASSIVE WIN.** Switch your algorithm to 'Drain / Payout Focus' to clean out the remaining wounded balance.")
-    else:
-        st.markdown("- **Next Step:** Queue up the exact same trade size again.")
+exec_data = [
+    {
+        "Platform": "Prop Account",
+        "Direction": prop_direction,
+        "Quantity (Units)": f"{prop_qty:.4f}",
+        "Stop Loss Price": f"{prop_sl_target:.4f}",
+        "Take Profit Price": f"{prop_tp_target:.4f}",
+        "Risk Amount": f"-${prop_sl_dollar:.2f}",
+        "Leverage": "N/A"
+    },
+    {
+        "Platform": "Bitunix (CEX)",
+        "Direction": cex_direction,
+        "Quantity (Units)": f"{cex_qty:.4f}",
+        "Stop Loss Price": f"{cex_sl_target:.4f}",
+        "Take Profit Price": f"{cex_tp_target:.4f}",
+        "Risk Amount": f"-${cex_sl_dollar:.2f}",
+        "Leverage": f"{cex_leverage:.1f}x"
+    }
+]
+st.table(pd.DataFrame(exec_data))
 
-with tab2:
-    st.markdown("### If Market Hits Your Prop Take Profit")
-    if is_in_dead_zone:
-        gross_payout_gain = prop_tp_dollar - dead_zone_amt
-        net_payout = max(0.0, gross_payout_gain * 0.90)
-        net_trade_profit = net_payout - cex_sl_dollar
-        
-        st.markdown(f"- **Prop Account:** Gains +${prop_tp_dollar:,.2f}, clearing the dead zone.")
-        if net_payout > 0:
-            st.markdown(f"- **Payout:** You trigger a payout of **${net_payout:,.2f}**.")
-        else:
-            st.markdown(f"- **Payout:** Still in dead zone. No payout triggered yet.")
-            
-        st.markdown(f"- **Bitunix Wallet:** Absorbs the **-${cex_sl_dollar:,.2f}** stop loss.")
-        st.markdown(f"- **Net Result:** Prop account is recovering/reset. You net **${net_trade_profit:+.2f}** overall.")
-    else:
-        net_payout = prop_tp_dollar * 0.90
-        net_trade_profit = net_payout - cex_sl_dollar
-        
-        st.markdown(f"- **Prop Account:** Gains +${prop_tp_dollar:,.2f}.")
-        st.markdown(f"- **Payout:** You trigger a payout of **${net_payout:,.2f}**.")
-        st.markdown(f"- **Bitunix Wallet:** Absorbs the **-${cex_sl_dollar:,.2f}** stop loss.")
-        st.markdown(f"- **Net Result:** You net **${net_trade_profit:+.2f}** overall.")
+# ==========================================
+# UI RENDERING: OUTCOMES MATRIX
+# ==========================================
+st.subheader("🔮 Scenario Outcomes")
+
+# Calculate net PnL based on Payouts and Hits
+# Scenario 1: CEX Wins (Prop hits SL, CEX hits TP)
+scen1_prop_pnl = -prop_sl_dollar
+scen1_cex_pnl = cex_tp_dollar
+scen1_net = scen1_prop_pnl + scen1_cex_pnl
+
+# Scenario 2: Prop Wins (Prop hits TP, CEX hits SL)
+scen2_gross_prop = prop_tp_dollar
+scen2_payout = max(0.0, (scen2_gross_prop - dead_zone_amt) * 0.90)
+scen2_cex_pnl = -cex_sl_dollar
+scen2_net = scen2_payout + scen2_cex_pnl
+
+outcome_data = [
+    {
+        "Scenario": "📉 The Drain (Prop SL / CEX TP)",
+        "Prop Balance Change": f"-${prop_sl_dollar:.2f}",
+        "CEX PnL (Wallet)": f"+${cex_tp_dollar:.2f}",
+        "Total Net Cash": f"${scen1_net:.2f}"
+    },
+    {
+        "Scenario": "📈 The Payout (Prop TP / CEX SL)",
+        "Prop Balance Change": f"+${prop_tp_dollar:.2f}",
+        "CEX PnL (Wallet)": f"-${cex_sl_dollar:.2f}",
+        "Total Net Cash": f"${scen2_net:.2f} (After 90% Split)"
+    }
+]
+st.table(pd.DataFrame(outcome_data))
+
+# Check for margin danger
+if cex_leverage > 100:
+    st.error(f"🚨 BITUNIX LIQUIDATION WARNING: Required leverage is {cex_leverage:.1f}x. You must deposit more funds or reduce Prop Risk.")
+elif cex_leverage > 50:
+    st.warning(f"⚠️ HIGH LEVERAGE: Required leverage is {cex_leverage:.1f}x. Ensure your Bitunix isolated margin can handle the stop loss.")
