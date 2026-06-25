@@ -110,7 +110,18 @@ if "Drain" in selected_strategy:
             st.success(f"🎯 **Hole Recovery:** To wipe out your -${hole_to_cover:,.2f} hole if Prop WINS, you need **{req_rr_win:.1f}x RR**. If Prop LOSES, you need **{req_rr_loss:.1f}x RR**.")
     
     # 3. Interactive Slider for Target
-    prop_rr = st.slider("Select Prop Take Profit (RR Multiplier)", min_value=1.0, max_value=15.0, value=3.0, step=0.1, help="Slide to see how holding for a larger payout impacts your net profit in the Outcome Matrix below.")
+    if "prop_rr_slider" not in st.session_state:
+        st.session_state.prop_rr_slider = 3.0
+        
+    def reset_rr():
+        st.session_state.prop_rr_slider = 3.0
+
+    slide_col, btn_col = st.columns([3, 1])
+    with slide_col:
+        prop_rr = st.slider("Select Prop Take Profit (RR Multiplier)", min_value=1.0, max_value=15.0, key="prop_rr_slider", step=0.1, help="Slide to see how holding for a larger payout impacts your net profit in the Outcome Matrix below.")
+    with btn_col:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        st.button("🔄 Reset to 3.0x", on_click=reset_rr, use_container_width=True)
 
 price_delta = abs(cmp_price - prop_sl_price)
 if price_delta <= 0:
