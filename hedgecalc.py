@@ -38,6 +38,11 @@ with st.sidebar:
                                    help="Enter your running total profit/loss on Bitunix for this specific prop account. Use negatives for losses.")
     
     st.markdown("---")
+    st.header("⚖️ Position Limits")
+    cex_max_qty = st.number_input("Max Bitunix Size (Units)", min_value=0.0, value=450.0, step=10.0, help="Max lot size limit for this specific coin on Bitunix.")
+    prop_leverage = st.number_input("Prop Account Max Leverage", min_value=1.0, value=50.0, step=1.0, help="Your Breakout account crypto leverage (e.g., 50x).")
+    
+    st.markdown("---")
     st.header("🧠 Strategy Selector")
     
     strategy_options = [
@@ -179,10 +184,40 @@ else:
 prop_qty = prop_sl_dollar / price_delta if price_delta > 0 else 0
 cex_qty = cex_sl_dollar / price_delta if price_delta > 0 else 0
 
+prop_direction = "Long" if cex_direction == "Short" else "Short"
+
+# Position Limit Engine
+prop_max_qty = (prop_balance * prop_leverage) / cmp_price if cmp_price > 0 else 0
+
+limit_hit = False
+req_delta_prop = 0
+req_delta_cex = 0
+
+if prop_qty > prop_max_qty:
+    limit_hit = True
+    req_delta_prop = prop_sl_dollar / prop_max_qty if prop_max_qty > 0 else 0
+if cex_qty > cex_max_qty and cex_max_qty > 0:
+    limit_hit = True
+    req_delta_cex = cex_sl_dollar / cex_max_qty
+
+if limit_hit:
+    required_delta = max(req_delta_prop, req_delta_cex)
+    sug_sl_long = cmp_price - required_delta
+    sug_sl_short = cmp_price + required_delta
+    sug_sl = sug_sl_long if prop_direction == "Long" else sug_sl_short
+    
+    st.error(f"🚨 **POSITION SIZE LIMIT EXCEEDED!** Your Stop Loss distance is too tight for the maximum lot sizes you are allowed to trade.")
+    
+    col_a, col_b = st.columns(2)
+    if prop_qty > prop_max_qty:
+        col_a.warning(f"📉 **Prop Limit Exceeded:**\n\nRequires: {prop_qty:,.2f} units\nMax Allowed: {prop_max_qty:,.2f} units\n*(Based on Current Balance x Leverage)*")
+    if cex_qty > cex_max_qty and cex_max_qty > 0:
+        col_b.warning(f"📈 **Bitunix Limit Exceeded:**\n\nRequires: {cex_qty:,.2f} units\nMax Allowed: {cex_max_qty:,.2f} units\n*(Based on Hard Exchange Limit)*")
+        
+    st.success(f"💡 **THE FIX:** To risk exactly **${prop_risk_chunk:,.2f}** without exceeding your max quantities, widen your Stop Loss to give the trade more room.\n\nChange your **Prop Stop Loss Price** to **{sug_sl:.4f}**")
+
 # Calculate Hedge Ratio
 hedge_ratio = cex_qty / prop_qty if prop_qty > 0 else 0
-
-prop_direction = "Long" if cex_direction == "Short" else "Short"
 
 if prop_direction == "Long":
     prop_sl_target = cmp_price - price_delta
