@@ -176,7 +176,7 @@ else:
     cex_tp_dollar = cex_sl_dollar / 2.0
 
 # Calculate Quantities
-prop_qty = prop_tp_dollar / price_delta if price_delta > 0 else 0
+prop_qty = prop_sl_dollar / price_delta if price_delta > 0 else 0
 cex_qty = cex_sl_dollar / price_delta if price_delta > 0 else 0
 
 # Calculate Hedge Ratio
