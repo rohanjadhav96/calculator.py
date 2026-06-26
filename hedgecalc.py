@@ -22,19 +22,20 @@ st.markdown("Dynamic mathematical sizing for perfect risk extraction.")
 with st.sidebar:
     st.header("⚙️ Account Settings")
     
-    tier_str = st.selectbox("Funded Account Tier", ["10k", "50k", "100k"], index=0)
+    # ADDED: '25k' to options, index set to 1 to auto-select 25k by default
+    tier_str = st.selectbox("Funded Account Tier", ["10k", "25k", "50k", "100k"], index=1)
     tier_value = int(tier_str.replace("k", "000"))
     
-    # 4% Legacy Rule Max Daily Loss
-    max_daily_loss = tier_value * 0.04 
+    # UPDATED: Max Daily Loss adjusted to the standard 3% rule for 2026 evaluations
+    max_daily_loss = tier_value * 0.03 
     # FIXED: Default Breakout legacy overall drawdown is 6%
     max_dd_percent = st.number_input("Max Overall Drawdown (%)", min_value=1.0, value=6.0, step=1.0)
     account_blow_level = tier_value * (1.0 - (max_dd_percent / 100.0))
     
-    prop_balance = st.number_input("Current Prop Balance ($)", min_value=0.0, value=9719.0, step=10.0)
-    cex_balance = st.number_input("Current Bitunix Balance ($)", min_value=0.0, value=1500.0, step=10.0)
+    prop_balance = st.number_input("Current Prop Balance ($)", min_value=0.0, value=float(tier_value), step=10.0)
+    cex_balance = st.number_input("Current Bitunix Balance ($)", min_value=0.0, value=3000.0, step=10.0)
     
-    prev_cex_pnl = st.number_input("Previous CEX PnL (Running Total $)", value=-60.0, step=10.0, 
+    prev_cex_pnl = st.number_input("Previous CEX PnL (Running Total $)", value=0.0, step=10.0, 
                                    help="Enter your running total profit/loss on Bitunix for this specific prop account. Use negatives for losses.")
     
     st.markdown("---")
@@ -70,16 +71,16 @@ st.subheader("🎯 Trade Parameters")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=10.0, value=350.0, step=10.0)
+    prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=10.0, value=float(tier_value * 0.025), step=10.0)
 with col2:
-    cmp_price = st.number_input("Entry Price (CMP)", min_value=0.0001, value=65000.0, format="%.4f")
+    cmp_price = st.number_input("Entry Price (CMP)", min_value=0.0001, value=62.3500, format="%.4f")
 with col3:
-    prop_sl_price = st.number_input("Prop Stop Loss Price", min_value=0.0001, value=64000.0, format="%.4f")
+    prop_sl_price = st.number_input("Prop Stop Loss Price", min_value=0.0001, value=58.3600, format="%.4f")
 with col4:
     cex_direction = st.selectbox("CEX Direction (Hedge)", ["Short", "Long"])
 
 if prop_risk_chunk > max_daily_loss:
-    st.error(f"⚠️ WARNING: Your risk (${prop_risk_chunk}) exceeds the 4% daily limit (${max_daily_loss})!")
+    st.error(f"⚠️ WARNING: Your risk (${prop_risk_chunk}) exceeds the 3% daily limit (${max_daily_loss})!")
 
 prop_rr = 3.0 # Default fallback
 if "Drain" in selected_strategy:
@@ -154,7 +155,7 @@ elif "Drain" in selected_strategy:
     
     if prop_balance <= tier_value:
         # Match CEX SL perfectly to the net payout for a $0 Breakeven
-        cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 1.5) 
+        cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 1.36) 
     else:
         # Throttle CEX SL when in profit to generate massive net returns on Payout
         cex_sl_dollar = prop_tp_dollar * 0.75 
@@ -298,7 +299,7 @@ while sim_balance > account_blow_level:
         if sim_balance <= tier_value:
             s_g_pay = s_p_tp - sim_dead_zone
             s_n_pay = max(0.0, s_g_pay * 0.90)
-            s_c_sl = s_n_pay if s_n_pay > 0 else (prop_risk_chunk * 1.5)
+            s_c_sl = s_n_pay if s_n_pay > 0 else (prop_risk_chunk * 1.36)
         else:
             s_c_sl = s_p_tp * 0.75
         step_cex_tp = s_c_sl / 3.0
