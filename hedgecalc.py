@@ -180,11 +180,28 @@ else:
     cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 0.75)
     cex_tp_dollar = cex_sl_dollar / 2.0
 
-# Calculate Quantities
-prop_qty = prop_sl_dollar / price_delta if price_delta > 0 else 0
-cex_qty = cex_sl_dollar / price_delta if price_delta > 0 else 0
+# Calculate Quantities & Perfect Mirror Targeting
+prop_qty_ideal = prop_sl_dollar / price_delta if price_delta > 0 else 0
 
 prop_direction = "Long" if cex_direction == "Short" else "Short"
+
+# 1. Force CEX Targets to Perfectly Mirror Prop Targets
+if prop_direction == "Long":
+    prop_sl_target = cmp_price - price_delta
+    prop_tp_target = cmp_price + (prop_tp_dollar / prop_qty_ideal) if prop_qty_ideal > 0 else cmp_price
+    
+    cex_sl_target = prop_tp_target
+    cex_tp_target = prop_sl_target
+else:
+    prop_sl_target = cmp_price + price_delta
+    prop_tp_target = cmp_price - (prop_tp_dollar / prop_qty_ideal) if prop_qty_ideal > 0 else cmp_price
+    
+    cex_sl_target = prop_tp_target
+    cex_tp_target = prop_sl_target
+
+# 2. Calculate ideal CEX Quantity based on mirrored CEX SL distance
+cex_sl_distance = abs(cex_sl_target - cmp_price)
+cex_qty_ideal = cex_sl_dollar / cex_sl_distance if cex_sl_distance > 0 else 0
 
 # Position Limit Engine
 prop_max_qty = (prop_balance * prop_leverage) / cmp_price if cmp_price > 0 else 0
@@ -193,12 +210,20 @@ limit_hit = False
 req_delta_prop = 0
 req_delta_cex = 0
 
+prop_qty = prop_qty_ideal
+cex_qty = cex_qty_ideal
+
 if prop_qty > prop_max_qty:
     limit_hit = True
     req_delta_prop = prop_sl_dollar / prop_max_qty if prop_max_qty > 0 else 0
+    prop_qty = prop_max_qty # Cap for display
+    
 if cex_qty > cex_max_qty and cex_max_qty > 0:
     limit_hit = True
-    req_delta_cex = cex_sl_dollar / cex_max_qty
+    # Fix delta calculation based on the true RR distance
+    cex_sl_distance_ratio = cex_sl_distance / price_delta if price_delta > 0 else prop_rr
+    req_delta_cex = cex_sl_dollar / (cex_max_qty * cex_sl_distance_ratio) if (cex_max_qty * cex_sl_distance_ratio) > 0 else 0
+    cex_qty = cex_max_qty # Cap for display
 
 if limit_hit:
     required_delta = max(req_delta_prop, req_delta_cex)
@@ -209,29 +234,21 @@ if limit_hit:
     st.error(f"🚨 **POSITION SIZE LIMIT EXCEEDED!** Your Stop Loss distance is too tight for the maximum lot sizes you are allowed to trade.")
     
     col_a, col_b = st.columns(2)
-    if prop_qty > prop_max_qty:
-        col_a.warning(f"📉 **Prop Limit Exceeded:**\n\nRequires: {prop_qty:,.2f} units\nMax Allowed: {prop_max_qty:,.2f} units\n*(Based on Current Balance x Leverage)*")
-    if cex_qty > cex_max_qty and cex_max_qty > 0:
-        col_b.warning(f"📈 **Bitunix Limit Exceeded:**\n\nRequires: {cex_qty:,.2f} units\nMax Allowed: {cex_max_qty:,.2f} units\n*(Based on Hard Exchange Limit)*")
+    if prop_qty_ideal > prop_max_qty:
+        col_a.warning(f"📉 **Prop Limit Exceeded:**\n\nRequires: {prop_qty_ideal:,.2f} units\nMax Allowed: {prop_max_qty:,.2f} units\n*(Based on Current Balance x Leverage)*")
+    if cex_qty_ideal > cex_max_qty and cex_max_qty > 0:
+        col_b.warning(f"📈 **Bitunix Limit Exceeded:**\n\nRequires: {cex_qty_ideal:,.2f} units\nMax Allowed: {cex_max_qty:,.2f} units\n*(Based on Hard Exchange Limit)*")
         
     st.success(f"💡 **THE FIX:** To risk exactly **${prop_risk_chunk:,.2f}** without exceeding your max quantities, widen your Stop Loss to give the trade more room.\n\nChange your **Prop Stop Loss Price** to **{sug_sl:.4f}**")
 
 # Calculate Hedge Ratio
 hedge_ratio = cex_qty / prop_qty if prop_qty > 0 else 0
 
-if prop_direction == "Long":
-    prop_sl_target = cmp_price - price_delta
-    prop_tp_target = cmp_price + (prop_tp_dollar / prop_qty) if prop_qty > 0 else cmp_price
-else:
-    prop_sl_target = cmp_price + price_delta
-    prop_tp_target = cmp_price - (prop_tp_dollar / prop_qty) if prop_qty > 0 else cmp_price
-
-if cex_direction == "Long":
-    cex_sl_target = cmp_price - (cex_sl_dollar / cex_qty) if cex_qty > 0 else cmp_price
-    cex_tp_target = cmp_price + (cex_tp_dollar / cex_qty) if cex_qty > 0 else cmp_price
-else:
-    cex_sl_target = cmp_price + (cex_sl_dollar / cex_qty) if cex_qty > 0 else cmp_price
-    cex_tp_target = cmp_price - (cex_tp_dollar / cex_qty) if cex_qty > 0 else cmp_price
+# Calculate ACTUAL Risk/Reward based on final (potentially capped) quantities
+actual_prop_sl_dollar = prop_qty * price_delta
+actual_prop_tp_dollar = prop_qty * abs(prop_tp_target - cmp_price)
+actual_cex_sl_dollar = cex_qty * cex_sl_distance
+actual_cex_tp_dollar = cex_qty * abs(cex_tp_target - cmp_price)
 
 cex_notional = cex_qty * cmp_price
 cex_leverage = cex_notional / cex_balance if cex_balance > 0 else 0
@@ -247,7 +264,7 @@ exec_data = [
         "Quantity (Units)": f"{prop_qty:.4f}",
         "Stop Loss Price": f"{prop_sl_target:.4f}",
         "Take Profit Price": f"{prop_tp_target:.4f}",
-        "Risk Amount": f"-${prop_sl_dollar:.2f}",
+        "Risk Amount": f"-${actual_prop_sl_dollar:.2f}",
         "Leverage": "N/A"
     },
     {
@@ -256,7 +273,7 @@ exec_data = [
         "Quantity (Units)": f"{cex_qty:.4f}",
         "Stop Loss Price": f"{cex_sl_target:.4f}",
         "Take Profit Price": f"{cex_tp_target:.4f}",
-        "Risk Amount": f"-${cex_sl_dollar:.2f}",
+        "Risk Amount": f"-${actual_cex_sl_dollar:.2f}",
         "Leverage": f"{cex_leverage:.1f}x"
     }
 ]
@@ -302,27 +319,26 @@ st.subheader("🔮 Immediate Trade Outcomes")
 def fmt_money(val):
     return f"{'-$' if val < 0 else '+$'}{abs(val):,.2f}"
 
-scen1_prop_pnl = -prop_sl_dollar
-scen1_cex_pnl = cex_tp_dollar
-# FIXED: We only count REAL CASH. We do not subtract virtual prop losses from your actual wallet net.
+scen1_prop_pnl = -actual_prop_sl_dollar
+scen1_cex_pnl = actual_cex_tp_dollar
 scen1_net = scen1_cex_pnl + prev_cex_pnl
 
-scen2_gross_prop = prop_tp_dollar
+scen2_gross_prop = actual_prop_tp_dollar
 scen2_payout = max(0.0, (scen2_gross_prop - dead_zone_amt) * 0.90)
-scen2_cex_pnl = -cex_sl_dollar
+scen2_cex_pnl = -actual_cex_sl_dollar
 scen2_net = scen2_payout + scen2_cex_pnl + prev_cex_pnl
 
 outcome_data = [
     {
         "Scenario": "📉 The Drain (Prop SL / CEX TP)",
-        "Prop Balance Change": f"-${prop_sl_dollar:.2f}",
-        "CEX PnL (Wallet)": f"+${cex_tp_dollar:.2f}",
+        "Prop Balance Change": f"-${actual_prop_sl_dollar:.2f}",
+        "CEX PnL (Wallet)": f"+${actual_cex_tp_dollar:.2f}",
         "Total Net Cash (Incl Prev PnL)": fmt_money(scen1_net)
     },
     {
         "Scenario": "📈 The Payout (Prop TP / CEX SL)",
-        "Prop Balance Change": f"+${prop_tp_dollar:.2f}",
-        "CEX PnL (Wallet)": f"-${cex_sl_dollar:.2f}",
+        "Prop Balance Change": f"+${actual_prop_tp_dollar:.2f}",
+        "CEX PnL (Wallet)": f"-${actual_cex_sl_dollar:.2f}",
         "Total Net Cash (Incl Prev PnL)": fmt_money(scen2_net)
     }
 ]
