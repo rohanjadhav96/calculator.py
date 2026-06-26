@@ -17,22 +17,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🛡️ Prop vs CEX Hedge Sizing Engine")
-st.markdown("Dynamic mathematical sizing for perfect risk extraction.")
-
-# Add Phase Toggle at the very top to distinguish Eval vs Funded logic
-phase_mode = st.radio("⚡ Select Current Account Phase", ["Evaluation Phase", "Funded Phase"], horizontal=True)
+st.markdown("Dynamic mathematical sizing for perfect risk extraction (Funded Phase Focus).")
 
 with st.sidebar:
     st.header("⚙️ Account Settings")
     
-    # ADDED 25k OPTION HERE
+    # 25k is now fully included alongside the standard tiers
     tier_str = st.selectbox("Funded Account Tier", ["10k", "25k", "50k", "100k"], index=1)
     tier_value = int(tier_str.replace("k", "000"))
     
-    # 2026 3% Max Daily Loss Limit
+    # 2026 Rules: 3% Max Daily Loss
     max_daily_loss = tier_value * 0.03 
     
-    # 2026 1-Step Classic overall drawdown is 6%
+    # 2026 Rules: 6% Overall Max Drawdown
     max_dd_percent = st.number_input("Max Overall Drawdown (%)", min_value=1.0, value=6.0, step=1.0)
     account_blow_level = tier_value * (1.0 - (max_dd_percent / 100.0))
     
@@ -40,26 +37,22 @@ with st.sidebar:
     cex_balance = st.number_input("Current Bitunix Balance ($)", min_value=0.0, value=3000.0, step=10.0)
     
     prev_cex_pnl = st.number_input("Previous CEX PnL (Running Total $)", value=0.0, step=10.0, 
-                                   help="Enter your running total profit/loss on Bitunix for this specific prop account.")
+                                   help="Enter your running total profit/loss on Bitunix for this specific prop account. Use negatives for losses.")
     
     st.markdown("---")
     st.header("⚖️ Position Limits")
     cex_max_qty = st.number_input("Max Bitunix Size (Units)", min_value=0.0, value=450.0, step=10.0, help="Max lot size limit for this specific coin on Bitunix.")
-    prop_leverage = st.number_input("Prop Account Max Leverage", min_value=1.0, value=50.0, step=1.0, help="Your Breakout account crypto leverage.")
+    prop_leverage = st.number_input("Prop Account Max Leverage", min_value=1.0, value=50.0, step=1.0, help="Your Breakout account crypto leverage (e.g., 50x).")
     
     st.markdown("---")
     st.header("🧠 Strategy Selector")
     
-    if phase_mode == "Evaluation Phase":
-        strategy_options = ["Eval Micro-Hedge (Pass Focus)"]
-    else:
-        strategy_options = [
-            "Drain / Payout Focus (Custom RR) [DYNAMIC]",
-            "High Win-Rate Payout (Asymmetric 3:1)",
-            "Aggressive Cash Drain (1:1)",
-            "Standard Breakeven (1:2 RR)"
-        ]
-        
+    strategy_options = [
+        "Drain / Payout Focus (Custom RR) [DYNAMIC]",
+        "High Win-Rate Payout (Asymmetric 3:1)",
+        "Aggressive Cash Drain (1:1)",
+        "Standard Breakeven (1:2 RR)"
+    ]
     selected_strategy = st.selectbox("Select Strategy Profile", strategy_options)
     
     target_net_profit = 0
@@ -69,14 +62,11 @@ with st.sidebar:
 is_underwater = prop_balance <= tier_value
 dead_zone_amt = max(0.0, tier_value - prop_balance)
 
-if phase_mode == "Evaluation Phase":
-    st.sidebar.markdown(f"ℹ️ **EVAL MODE:** Target is 10% (+${tier_value*0.10:,.2f}) to unlock Funded.")
+if is_underwater:
+    st.sidebar.markdown(f"🚨 **DEAD ZONE:** You are **${dead_zone_amt:,.2f}** underwater.")
 else:
-    if is_underwater:
-        st.sidebar.markdown(f"🚨 **DEAD ZONE:** You are **${dead_zone_amt:,.2f}** underwater.")
-    else:
-        buffer_amt = prop_balance - tier_value
-        st.sidebar.markdown(f"✅ **BUFFER:** You have a **${buffer_amt:,.2f}** safety buffer.")
+    buffer_amt = prop_balance - tier_value
+    st.sidebar.markdown(f"✅ **BUFFER:** You have a **${buffer_amt:,.2f}** safety buffer.")
 
 st.subheader("🎯 Trade Parameters")
 col1, col2, col3, col4 = st.columns(4)
@@ -111,6 +101,12 @@ if "Drain" in selected_strategy:
             req_prop_tp = (req_cex_sl / 0.90) + dead_zone_amt
             req_rr = req_prop_tp / prop_risk_chunk
             st.success(f"🎯 **Hole Recovery:** To extract enough cash to wipe out your -${hole_to_cover:,.2f} hole in ONE trade if Prop LOSES, you need a Prop Target of **{req_rr:.1f}x RR**.")
+        else:
+            req_tp_win = hole_to_cover / 0.15
+            req_rr_win = req_tp_win / prop_risk_chunk
+            req_tp_loss = hole_to_cover / 0.25
+            req_rr_loss = req_tp_loss / prop_risk_chunk
+            st.success(f"🎯 **Hole Recovery:** To wipe out your -${hole_to_cover:,.2f} hole if Prop WINS, you need **{req_rr_win:.1f}x RR**. If Prop LOSES, you need **{req_rr_loss:.1f}x RR**.")
     
     if "prop_rr_slider" not in st.session_state:
         st.session_state.prop_rr_slider = 3.0
@@ -130,29 +126,26 @@ if price_delta <= 0:
     st.warning("Please enter a valid Entry and Stop Loss price to calculate.")
     st.stop()
 
-# Mathematical Core Strategy Router
-if phase_mode == "Evaluation Phase":
-    # Eval Micro-Hedge: Cap CEX Stop Loss at exactly the cost of the evaluation ($150 for 25k Pro, $215 for Classic)
-    eval_cost = 215.0 if tier_value == 25000 else (400.0 if tier_value == 50000 else 85.0)
-    cex_sl_dollar = eval_cost
-    cex_tp_dollar = prop_risk_chunk * 0.25 # Small extraction to offset fees if prop fails
-    prop_tp_dollar = prop_risk_chunk * 4.0 # Aim high to clear 10% target
-
-elif "High Win-Rate" in selected_strategy:
+# Reverted Strategy Logic Matrix
+if "High Win-Rate" in selected_strategy:
     prop_sl_dollar = prop_risk_chunk
     prop_tp_dollar = prop_risk_chunk / 3.0
+    
     gross_payout = prop_tp_dollar - dead_zone_amt
     net_payout = max(0.0, gross_payout * 0.90)
+    
     cex_sl_dollar = max(0.0, net_payout - target_net_profit)
     cex_tp_dollar = cex_sl_dollar * 3.0 
 
 elif "Drain" in selected_strategy:
     prop_sl_dollar = prop_risk_chunk
     prop_tp_dollar = prop_risk_chunk * prop_rr
+    
     gross_payout = prop_tp_dollar - dead_zone_amt
     net_payout = max(0.0, gross_payout * 0.90)
     
     if prop_balance <= tier_value:
+        # Reverted back to the flawless 1.36x scaling mechanics for deep water
         cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 1.36) 
     else:
         cex_sl_dollar = prop_tp_dollar * 0.75 
@@ -162,18 +155,22 @@ elif "Drain" in selected_strategy:
 elif "Aggressive" in selected_strategy:
     prop_sl_dollar = prop_risk_chunk
     prop_tp_dollar = prop_risk_chunk
+    
     cex_sl_dollar = prop_risk_chunk * 0.90
     cex_tp_dollar = prop_risk_chunk * 0.90
+
 else:
     prop_sl_dollar = prop_risk_chunk
     prop_tp_dollar = prop_risk_chunk * 2.0
+    
     gross_payout = prop_tp_dollar - dead_zone_amt
     net_payout = max(0.0, gross_payout * 0.90)
+    
     cex_sl_dollar = net_payout if net_payout > 0 else (prop_risk_chunk * 0.75)
     cex_tp_dollar = cex_sl_dollar / 2.0
 
-# Calculate Positions & Mirrors
-prop_qty_ideal = prop_risk_chunk / price_delta if price_delta > 0 else 0
+# Mirror Calculation Layer
+prop_qty_ideal = prop_sl_dollar / price_delta if price_delta > 0 else 0
 prop_direction = "Long" if cex_direction == "Short" else "Short"
 
 if prop_direction == "Long":
@@ -187,12 +184,12 @@ else:
     cex_sl_target = prop_tp_target
     cex_tp_target = prop_sl_target
 
-# Fixed Mirror Sizing
 cex_sl_distance = abs(cex_sl_target - cmp_price)
 cex_qty_ideal = cex_sl_dollar / cex_sl_distance if cex_sl_distance > 0 else 0
 
-# Position Limit Engine Logic
+# Position Limit Engine (Matches balance dynamically in drawdown)
 prop_max_qty = (prop_balance * prop_leverage) / cmp_price if cmp_price > 0 else 0
+
 limit_hit = False
 req_delta_prop = 0
 req_delta_cex = 0
@@ -202,7 +199,7 @@ cex_qty = cex_qty_ideal
 
 if prop_qty > prop_max_qty:
     limit_hit = True
-    req_delta_prop = prop_risk_chunk / prop_max_qty if prop_max_qty > 0 else 0
+    req_delta_prop = prop_sl_dollar / prop_max_qty if prop_max_qty > 0 else 0
     prop_qty = prop_max_qty
     
 if cex_qty > cex_max_qty and cex_max_qty > 0:
@@ -215,16 +212,19 @@ if limit_hit:
     required_delta = max(req_delta_prop, req_delta_cex)
     sug_sl = (cmp_price - required_delta) if prop_direction == "Long" else (cmp_price + required_delta)
     
-    st.error(f"🚨 **POSITION SIZE LIMIT EXCEEDED!** Stop Loss distance is too tight for the maximum allowed lot sizes.")
+    st.error(f"🚨 **POSITION SIZE LIMIT EXCEEDED!** Stop loss distance is too tight for exchange capacities.")
+    
     col_a, col_b = st.columns(2)
     if prop_qty_ideal > prop_max_qty:
         col_a.warning(f"📉 **Prop Limit Exceeded:**\n\nRequires: {prop_qty_ideal:,.2f} units\nMax Allowed: {prop_max_qty:,.2f} units")
     if cex_qty_ideal > cex_max_qty and cex_max_qty > 0:
         col_b.warning(f"📈 **Bitunix Limit Exceeded:**\n\nRequires: {cex_qty_ideal:,.2f} units\nMax Allowed: {cex_max_qty:,.2f} units")
         
-    st.success(f"💡 **THE FIX:** Change your **Prop Stop Loss Price** to **{sug_sl:.4f}** to perfectly match limits.")
+    st.success(f"💡 **THE FIX:** Update your **Prop Stop Loss Price** to **{sug_sl:.4f}**")
 
+# Outputs
 hedge_ratio = cex_qty / prop_qty if prop_qty > 0 else 0
+
 actual_prop_sl_dollar = prop_qty * price_delta
 actual_prop_tp_dollar = prop_qty * abs(prop_tp_target - cmp_price)
 actual_cex_sl_dollar = cex_qty * cex_sl_distance
@@ -235,6 +235,7 @@ cex_leverage = cex_notional / cex_balance if cex_balance > 0 else 0
 
 st.markdown("---")
 st.markdown(f"### 📋 Execution Plan (Hedge Ratio: `{hedge_ratio:.2f}x`)")
+st.caption(f"A {hedge_ratio:.2f}x ratio means your Bitunix position size is exactly {hedge_ratio*100:.1f}% the size of your Prop position.")
 
 exec_data = [
     {
@@ -258,7 +259,7 @@ exec_data = [
 ]
 st.table(pd.DataFrame(exec_data))
 
-# Projection Engine Loops
+# Projection Engine
 sim_balance = prop_balance
 total_drain_profit = 0.0
 trades_to_blow = 0
@@ -267,9 +268,7 @@ while sim_balance > account_blow_level:
     trades_to_blow += 1
     sim_dead_zone = max(0.0, tier_value - sim_balance)
     
-    if phase_mode == "Evaluation Phase":
-        step_cex_tp = prop_risk_chunk * 0.25
-    elif "High Win-Rate" in selected_strategy:
+    if "High Win-Rate" in selected_strategy:
         step_cex_tp = max(0.0, (prop_risk_chunk / 3.0 - sim_dead_zone) * 0.90 - target_net_profit) * 3.0
     elif "Drain" in selected_strategy:
         if sim_balance <= tier_value:
@@ -278,8 +277,10 @@ while sim_balance > account_blow_level:
         else:
             s_c_sl = (prop_risk_chunk * prop_rr) * 0.75
         step_cex_tp = s_c_sl / 3.0
-    else:
+    elif "Aggressive" in selected_strategy:
         step_cex_tp = prop_risk_chunk * 0.90
+    else:
+        step_cex_tp = max(0.0, (prop_risk_chunk * 2.0 - sim_dead_zone) * 0.90) / 2.0
         
     total_drain_profit += step_cex_tp
     sim_balance -= prop_risk_chunk
@@ -293,17 +294,10 @@ scen1_prop_pnl = -actual_prop_sl_dollar
 scen1_cex_pnl = actual_cex_tp_dollar
 scen1_net = scen1_cex_pnl + prev_cex_pnl
 
-if phase_mode == "Evaluation Phase":
-    scen2_net = -actual_cex_sl_dollar + prev_cex_pnl
-    scen2_desc = "📈 Prop Passes Eval / CEX SL Hit"
-    scen2_prop_disp = "Passed (+10%)"
-else:
-    scen2_gross_prop = actual_prop_tp_dollar
-    scen2_payout = max(0.0, (scen2_gross_prop - dead_zone_amt) * 0.90)
-    scen2_cex_pnl = -actual_cex_sl_dollar
-    scen2_net = scen2_payout + scen2_cex_pnl + prev_cex_pnl
-    scen2_desc = "📈 The Payout (Prop TP / CEX SL)"
-    scen2_prop_disp = f"+${actual_prop_tp_dollar:.2f}"
+scen2_gross_prop = actual_prop_tp_dollar
+scen2_payout = max(0.0, (scen2_gross_prop - dead_zone_amt) * 0.90)
+scen2_cex_pnl = -actual_cex_sl_dollar
+scen2_net = scen2_payout + scen2_cex_pnl + prev_cex_pnl
 
 outcome_data = [
     {
@@ -313,8 +307,8 @@ outcome_data = [
         "Total Net Cash (Incl Prev PnL)": fmt_money(scen1_net)
     },
     {
-        "Scenario": scen2_desc,
-        "Prop Balance Change": scen2_prop_disp,
+        "Scenario": "📈 The Payout (Prop TP / CEX SL)",
+        "Prop Balance Change": f"+${actual_prop_tp_dollar:.2f}",
         "CEX PnL (Wallet)": f"-${actual_cex_sl_dollar:.2f}",
         "Total Net Cash (Incl Prev PnL)": fmt_money(scen2_net)
     }
@@ -322,21 +316,22 @@ outcome_data = [
 st.table(pd.DataFrame(outcome_data))
 
 st.markdown("---")
-st.subheader("Full Account Drain Projection")
+st.subheader("🩸 Full Account Drain Projection (100% Loss Rate)")
+
 final_drain_net = total_drain_profit + prev_cex_pnl
 pnl_color = "success-text" if final_drain_net > 0 else "warning-text"
 
 st.markdown(f"""
 <div class="metric-box">
-    If you follow the strategy rules from your current balance of <b>${prop_balance:,.2f}</b> until the account hits the limit of ${account_blow_level:,.2f}:
+    If you lose every single trade from your current balance of <b>${prop_balance:,.2f}</b> until the account is completely blown (at the 6% limit of ${account_blow_level:,.2f}), the math dynamically extracts cash on every single loss.
     <br><br>
-    💥 <b>Estimated Trades/Losses Cushion:</b> {trades_to_blow} attempts<br>
-    💰 <b>Total Bitunix Cash Extracted (This Run):</b> <span class="success-text">+${total_drain_profit:,.2f}</span><br>
-    📊 <b>FINAL NET CASH POSITION (Including Previous PnL):</b> <span class="{pnl_color}">{fmt_money(final_drain_net)}</span>
+    💥 <b>Trades to Blow Account:</b> {trades_to_blow} consecutive losses<br>
+    💰 <b>Total Bitunix Cash Extracted (From Current Balance):</b> <span class="success-text">+${total_drain_profit:,.2f}</span><br>
+    📊 <b>FINAL NET CASH (Including Previous ${prev_cex_pnl:.2f} PnL):</b> <span class="{pnl_color}">{fmt_money(final_drain_net)}</span>
 </div>
 """, unsafe_allow_html=True)
 
 if cex_leverage > 100:
     st.error(f"🚨 BITUNIX LIQUIDATION WARNING: Required leverage is {cex_leverage:.1f}x. Deposit more funds or reduce Prop Risk.")
 elif cex_leverage > 40:
-    st.warning(f"⚠️ HIGH LEVERAGE WARNING: Required leverage is {cex_leverage:.1f}x. Verify margin limits.")
+    st.warning(f"⚠️ HIGH LEVERAGE: Required leverage is {cex_leverage:.1f}x. Ensure your isolated margin is prepared.")
