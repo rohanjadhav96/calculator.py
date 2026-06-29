@@ -43,7 +43,7 @@ with st.sidebar:
     st.markdown("---")
     st.header("🧠 Strategy Selector")
     
-    # ADDED: Custom Manual Hedge Ratio Option to the checklist
+    # Custom Manual Hedge Ratio Option to the checklist
     strategy_options = [
         "Drain / Payout Focus (Custom RR) [DYNAMIC]",
         "Manual Hedge Ratio Selection [CUSTOM]",
@@ -53,7 +53,7 @@ with st.sidebar:
     ]
     selected_strategy = st.selectbox("Select Strategy Profile", strategy_options)
     
-    # ADDED: Conditional Manual Hedge Ratio input slider
+    # Conditional Manual Hedge Ratio input slider
     custom_hedge_ratio = 1.0
     if selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
         custom_hedge_ratio = st.slider("Select Custom Hedge Ratio (CEX Qty / Prop Qty)", min_value=0.10, max_value=3.00, value=0.75, step=0.01)
@@ -140,8 +140,9 @@ if selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
     
     # Keep targets perfectly mirrored on chart limits
     prop_tp_dollar = prop_risk_chunk * 2.0  # Assumes standard 1:2 execution matrix target
-    cex_sl_dollar = cex_qty_ideal * price_delta
-    cex_tp_dollar = cex_qty_ideal * (price_delta * 2.0)
+    # FIXED: Swapped core assignments to align with geometric mapping
+    cex_sl_dollar = cex_qty_ideal * (price_delta * 2.0)
+    cex_tp_dollar = cex_qty_ideal * price_delta
 
 elif "High Win-Rate" in selected_strategy:
     prop_sl_dollar = prop_risk_chunk
@@ -299,7 +300,8 @@ while sim_balance > account_blow_level:
     sim_dead_zone = max(0.0, tier_value - sim_balance)
     
     if selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
-        step_cex_tp = (prop_risk_chunk / price_delta) * custom_hedge_ratio * (price_delta * 2.0)
+        # FIXED: Accumulated target extraction per trade uses price_delta (TP distance), NOT price_delta * 2.0
+        step_cex_tp = (prop_risk_chunk / price_delta) * custom_hedge_ratio * price_delta
     elif "High Win-Rate" in selected_strategy:
         s_p_tp = prop_risk_chunk / 3.0
         s_g_pay = s_p_tp - sim_dead_zone
