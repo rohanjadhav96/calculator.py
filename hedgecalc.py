@@ -73,10 +73,10 @@ with st.sidebar:
         target_to_pass = tier_value * default_target_pct
         st.info(f"Target to Pass ({int(default_target_pct*100)}%): **${target_to_pass:,.2f}**")
         
-        # PnL input acts as a tracker in Eval mode too now (tracks extracted cash)
         prev_cex_pnl = st.number_input("Extracted Cash / Sunk Costs ($)", step=10.0, key="st_prev_cex_pnl")
     else:
         prev_cex_pnl = st.number_input("Previous CEX PnL (Running Total $)", step=10.0, key="st_prev_cex_pnl")
+        challenge_fee = 0.0 # Not used dynamically in funded stage math
     
     st.header("⚖️ Position Limits")
     cex_max_qty = st.number_input("Max Bitunix Size (Units)", min_value=0.0, value=450.0, step=10.0)
@@ -84,6 +84,7 @@ with st.sidebar:
     
     st.header("🧠 Strategy Selector")
     strategy_options = [
+        "Funded Recovery / Breakeven Mode [AUTO]",
         "Manual Hedge Ratio Selection [CUSTOM]",
         "Drain / Payout Focus (Custom RR) [DYNAMIC]",
         "High Win-Rate Payout (Asymmetric 3:1)",
@@ -95,6 +96,11 @@ with st.sidebar:
     custom_hedge_ratio = 1.0
     if selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
         custom_hedge_ratio = st.slider("Select Custom Hedge Ratio (CEX Qty / Prop Qty)", min_value=0.10, max_value=3.00, value=0.41, step=0.01)
+        
+    target_recovery_profit = 0.0
+    if selected_strategy == "Funded Recovery / Breakeven Mode [AUTO]":
+        st.info("Auto-Recovery calculates the exact hedge needed to erase your sunk costs using the remaining drawdown.")
+        target_recovery_profit = st.slider("Desired Bonus Profit After Recovery ($)", 0.0, 1000.0, 0.0, step=10.0)
     
     target_net_profit = 0
     if "High Win-Rate" in selected_strategy and account_phase == "Funded Stage (Payout Focus)":
@@ -107,8 +113,8 @@ st.subheader("🎯 Trade Parameters")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1: 
-    default_risk = tier_value * 0.025 if account_phase == "Evaluation Stage (Milking Evals)" else tier_value * 0.035
-    # Automatically bound the suggested risk if the account is near blow level
+    # DEFAULT TO 2.5% RISK FOR BOTH EVAL AND FUNDED STAGES
+    default_risk = tier_value * 0.025 
     suggested_risk = min(default_risk, prop_balance - account_blow_level)
     if suggested_risk < 10.0: suggested_risk = 10.0
     prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=1.0, value=float(suggested_risk), step=10.0)
@@ -122,7 +128,7 @@ if (prop_balance - prop_risk_chunk) < account_blow_level:
     st.error(f"🚨 FATAL WARNING: This risk (${prop_risk_chunk}) will blow the account! You only have ${(prop_balance - account_blow_level):.2f} drawdown left.")
 
 prop_rr = 3.0 
-if "Drain" in selected_strategy:
+if "Drain" in selected_strategy or "Recovery" in selected_strategy:
     if "prop_rr_slider" not in st.session_state: st.session_state.prop_rr_slider = 3.0
     def reset_rr(): st.session_state.prop_rr_slider = 3.0
     slide_col, btn_col = st.columns([3, 1])
@@ -134,7 +140,29 @@ prop_qty_ideal = prop_risk_chunk / price_delta if price_delta > 0 else 0
 prop_direction = "Long" if cex_direction == "Short" else "Short"
 
 # --- CORE MATH LOGIC ---
-if selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
+if selected_strategy == "Funded Recovery / Breakeven Mode [AUTO]":
+    # 1. Calculate how much total cash we need to recover the hole + desired bonus
+    hole = abs(prev_cex_pnl) if prev_cex_pnl < 0 else 0
+    total_target_cash = hole + target_recovery_profit
+    
+    # 2. Spread that recovery across ALL remaining drawdown for maximum safety
+    avail_dd = prop_balance - account_blow_level
+    if avail_dd <= 0: avail_dd = prop_risk_chunk # Fallback to prevent Div by Zero
+    
+    req_hedge_ratio = total_target_cash / avail_dd
+    
+    prop_tp_dollar = prop_risk_chunk * prop_rr
+    cex_tp_dollar = prop_risk_chunk * req_hedge_ratio
+    cex_sl_dollar = prop_tp_dollar * req_hedge_ratio
+    cex_qty_ideal = prop_qty_ideal * req_hedge_ratio
+    
+    # Warning if the required recovery demands too high of a CEX SL (Net loss on a win)
+    gross_payout = prop_tp_dollar - dead_zone_amt
+    net_payout = max(0.0, gross_payout * 0.90)
+    if cex_sl_dollar > net_payout and account_phase == "Funded Stage (Payout Focus)":
+        st.sidebar.warning(f"⚠️ **Overhedge Warning:** Recovering ${total_target_cash:.2f} requires a heavy CEX SL. If Breakout wins, you'll take a net loss of ${abs(net_payout - cex_sl_dollar):.2f}.")
+
+elif selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
     cex_qty_ideal = prop_qty_ideal * custom_hedge_ratio
     if account_phase == "Evaluation Stage (Milking Evals)":
         prop_tp_dollar = target_to_pass - (prop_balance - tier_value) if (target_to_pass - (prop_balance - tier_value)) > 0 else prop_risk_chunk * 4.0
@@ -178,7 +206,7 @@ else:
 
 max_safe_cex_sl = cex_balance * 0.85
 wallet_capped = False
-if selected_strategy != "Manual Hedge Ratio Selection [CUSTOM]":
+if selected_strategy != "Manual Hedge Ratio Selection [CUSTOM]" and selected_strategy != "Funded Recovery / Breakeven Mode [AUTO]":
     if cex_sl_dollar > max_safe_cex_sl and max_safe_cex_sl > 0:
         scale_factor = max_safe_cex_sl / cex_sl_dollar
         cex_sl_dollar = max_safe_cex_sl
@@ -225,12 +253,13 @@ def handle_loss(risk, cex_win):
     st.session_state.st_prev_cex_pnl += cex_win
     st.session_state.st_trade_logs.append(f"📉 DRAIN SUCCESS: Breakout lost ${risk:,.2f}. Bitunix extracted +${cex_win:,.2f} to wallet.")
 
-def handle_win(gross_prop, cex_loss, is_eval, tier_val, dead_zone):
+def handle_win(gross_prop, cex_loss, is_eval, tier_val, dead_zone, fee):
     if is_eval:
         st.session_state.st_account_phase = "Funded Stage (Payout Focus)"
         st.session_state.st_prop_balance = float(tier_val)
-        st.session_state.st_prev_cex_pnl -= cex_loss
-        st.session_state.st_trade_logs.append(f"🎉 CHALLENGE PASSED! Bitunix absorbed -${cex_loss:,.2f} hedge cost. Dashboard upgraded to Funded Stage & Balance reset to ${tier_val:,.2f}. Resume draining!")
+        # FIX: The entire sunk cost (Hedge Loss + Eval Fee) is successfully moved into the PnL tracker!
+        st.session_state.st_prev_cex_pnl -= (cex_loss + fee)
+        st.session_state.st_trade_logs.append(f"🎉 CHALLENGE PASSED! Sunk Cost: -${cex_loss:,.2f} hedge & -${fee:,.2f} fee. Dashboard upgraded to Funded Stage & Balance reset to ${tier_val:,.2f}. Switch to 'Funded Recovery' to map the exact drain!")
     else:
         payout = max(0.0, (gross_prop - dead_zone) * 0.90)
         st.session_state.st_prop_balance = float(tier_val)
@@ -247,7 +276,8 @@ act_col1, act_col2, act_col3 = st.columns([2, 2, 1])
 with act_col1:
     st.button("📉 Breakout Lost (Hit SL)", on_click=handle_loss, args=(actual_prop_sl_dollar, actual_cex_tp_dollar), use_container_width=True, type="primary")
 with act_col2:
-    st.button("📈 Breakout Won (Hit TP)", on_click=handle_win, args=(actual_prop_tp_dollar, actual_cex_sl_dollar, account_phase == "Evaluation Stage (Milking Evals)", tier_value, dead_zone_amt), use_container_width=True)
+    fee_arg = challenge_fee if account_phase == "Evaluation Stage (Milking Evals)" else 0.0
+    st.button("📈 Breakout Won (Hit TP)", on_click=handle_win, args=(actual_prop_tp_dollar, actual_cex_sl_dollar, account_phase == "Evaluation Stage (Milking Evals)", tier_value, dead_zone_amt, fee_arg), use_container_width=True)
 with act_col3:
     st.button("🔄 Clear Sequence", on_click=reset_sequence, use_container_width=True)
 
@@ -276,7 +306,10 @@ while sim_balance > account_blow_level:
     sim_dead_zone = max(0.0, tier_value - sim_balance)
     current_sim_risk = min(prop_risk_chunk, sim_balance - account_blow_level)
     
-    if selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
+    if selected_strategy == "Funded Recovery / Breakeven Mode [AUTO]":
+        # Spreads the target recovery perfectly over the simulated drawdown sizes
+        step_cex_tp = current_sim_risk * req_hedge_ratio
+    elif selected_strategy == "Manual Hedge Ratio Selection [CUSTOM]":
         step_cex_tp = (current_sim_risk / price_delta) * custom_hedge_ratio * price_delta
     elif "High Win-Rate" in selected_strategy:
         s_p_tp = current_sim_risk / 3.0
