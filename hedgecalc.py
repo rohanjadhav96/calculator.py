@@ -47,7 +47,7 @@ default_target_pct = 0.10 if account_type == "Classic Rules" else 0.12
 
 with st.sidebar:
     st.header("⚙️ Account Settings")
-    tier_str = st.selectbox("Funded Account Tier", ["10k", "25k", "50k", "100k"], index=1)
+    tier_str = st.selectbox("Funded Account Tier", ["10k", "25k", "50k", "100k"], index=0)
     tier_value = int(tier_str.replace("k", "000"))
     
     # Auto-reset balances if user changes Tier
@@ -80,7 +80,9 @@ with st.sidebar:
     
     st.header("⚖️ Position Limits")
     cex_max_qty = st.number_input("Max Bitunix Size (Units)", min_value=0.0, value=450.0, step=10.0)
-    prop_leverage = st.number_input("Prop Account Max Leverage", min_value=1.0, value=50.0, step=1.0)
+    
+    # --- FIXED: DEFAULT LEVERAGE NOW 2.0x ---
+    prop_leverage = st.number_input("Prop Account Max Leverage", min_value=1.0, value=2.0, step=1.0, help="Breakout strictly limits Crypto pairs to 1:2 Leverage (50% Margin Requirement). Leave this at 2 unless trading Forex/Indices.")
     
     st.header("🧠 Strategy Selector")
     strategy_options = [
@@ -111,12 +113,12 @@ dead_zone_amt = max(0.0, tier_value - prop_balance)
 
 st.subheader("🎯 Trade Parameters")
 
-# --- NEW: Sizing Method Toggle ---
+# --- Sizing Method Toggle ---
 sizing_method = st.radio(
     "Position Sizing Mode", 
     ["Auto Max Size (Tightest SL / Fastest TP)", "Manual Stop Loss Price"], 
     horizontal=True,
-    help="Auto Mode maximizes your units to the exchange limits, giving you the tightest possible SL and TP levels to complete your trade rapidly intraday."
+    help="Auto Mode maximizes your units to the exchange AND prop margin limits, giving you the tightest possible SL and TP levels to complete your trade rapidly intraday."
 )
 
 col1, col2, col3, col4 = st.columns(4)
@@ -127,7 +129,7 @@ with col1:
     if suggested_risk < 10.0: suggested_risk = 10.0
     prop_risk_chunk = st.number_input("Prop Risk Per Trade ($)", min_value=1.0, value=float(suggested_risk), step=10.0)
 with col2: 
-    cmp_price = st.number_input("Entry Price (CMP)", min_value=0.0001, value=62.3500, format="%.4f")
+    cmp_price = st.number_input("Entry Price (CMP)", min_value=0.0001, value=65.7500, format="%.4f")
 with col4: 
     cex_direction = st.selectbox("CEX Direction (Hedge)", ["Short", "Long"])
     prop_direction = "Long" if cex_direction == "Short" else "Short"
@@ -145,7 +147,7 @@ if "Drain" in selected_strategy or "Recovery" in selected_strategy:
     with slide_col: prop_rr = st.slider("Select Prop Take Profit (RR Multiplier)", min_value=1.0, max_value=15.0, key="prop_rr_slider", step=0.1)
     with btn_col: st.button("🔄 Reset to 3.0x", on_click=reset_rr, use_container_width=True)
 
-# ---- NEW: DOLLAR TARGET ENGINE (Independent of Price/Qty) ----
+# ---- DOLLAR TARGET ENGINE (Independent of Price/Qty) ----
 prop_sl_dollar = prop_risk_chunk
 implied_hedge_ratio = 1.0
 
@@ -219,19 +221,19 @@ if selected_strategy not in ["Manual Hedge Ratio Selection [CUSTOM]", "Funded Re
         implied_hedge_ratio = implied_hedge_ratio * scale_factor
         wallet_capped = True
 
-# ---- NEW: POSITION GEOMETRY EXTRACTOR ----
+# ---- POSITION GEOMETRY EXTRACTOR ----
 with col3:
     if sizing_method == "Manual Stop Loss Price":
-        prop_sl_price = st.number_input("Prop Stop Loss Price", min_value=0.0001, value=60.0000, format="%.4f")
+        prop_sl_price = st.number_input("Prop Stop Loss Price", min_value=0.0001, value=65.0000, format="%.4f")
         price_delta = abs(cmp_price - prop_sl_price)
         prop_qty_ideal = prop_risk_chunk / price_delta if price_delta > 0 else 0
     else:
-        # Calculate Max Qty Limits mathematically
+        # Calculate Max Qty Limits mathematically based on True Prop Leverage Limit
         prop_max_qty_by_leverage = (prop_balance * prop_leverage) / cmp_price if cmp_price > 0 else float('inf')
         prop_max_qty_by_cex_limit = cex_max_qty / implied_hedge_ratio if implied_hedge_ratio > 0 else float('inf')
         if cex_max_qty <= 0: prop_max_qty_by_cex_limit = float('inf')
         
-        # Max out the size based on the tightest bottleneck (minus 1% safety buffer for exchange logic)
+        # Max out the size based on the tightest bottleneck (minus 1% safety buffer for margin fluctuations)
         best_prop_qty = min(prop_max_qty_by_leverage, prop_max_qty_by_cex_limit)
         prop_qty_ideal = best_prop_qty * 0.99 if best_prop_qty != float('inf') else 0
         
@@ -256,7 +258,7 @@ else:
 
 cex_sl_distance = abs(cex_sl_target - cmp_price)
 
-# Position Limit Check (Ensures user manual inputs aren't rejected)
+# Position Limit Check
 prop_max_qty = (prop_balance * prop_leverage) / cmp_price if cmp_price > 0 else 0
 limit_hit = False
 prop_qty = prop_qty_ideal
@@ -272,13 +274,13 @@ if cex_qty > cex_max_qty and cex_max_qty > 0:
 
 if limit_hit:
     if sizing_method == "Manual Stop Loss Price":
-        st.error("🚨 **POSITION SIZE LIMIT EXCEEDED!** Your Stop Loss distance is too tight for exchange allowances.")
+        st.error("🚨 **MARGIN LIMIT EXCEEDED!** Your Stop Loss is too tight for the maximum buying power your Prop Account has.")
         col_a, col_b = st.columns(2)
-        if prop_qty_ideal > prop_max_qty: col_a.warning(f"📉 **Prop Limit Exceeded:** Requires: {prop_qty_ideal:,.2f} units | Max: {prop_max_qty:,.2f} units")
+        if prop_qty_ideal > prop_max_qty: col_a.warning(f"📉 **Prop Margin Exceeded:** Requires: {prop_qty_ideal:,.2f} units | Max: {prop_max_qty:,.2f} units (At {prop_leverage}x)")
         if cex_qty_ideal > cex_max_qty and cex_max_qty > 0: col_b.warning(f"📈 **CEX Limit Exceeded:** Requires: {cex_qty_ideal:,.2f} units | Max: {cex_max_qty:,.2f} units")
-        st.success("💡 **THE FIX:** Click **'Auto Max Size'** in the toggle above to instantly compress your position, or manually widen your Stop Loss.")
+        st.success("💡 **THE FIX:** Click **'Auto Max Size'** in the toggle above to instantly compress your position within margin rules, or manually widen your Stop Loss.")
     else:
-        st.warning("Position clipped perfectly to match exchange maximum limits.")
+        st.warning("Position capped safely inside your margin limits.")
 
 hedge_ratio = cex_qty / prop_qty if prop_qty > 0 else 0
 actual_prop_sl_dollar = prop_qty * price_delta
